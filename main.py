@@ -2,6 +2,8 @@ import os
 import sys
 from dataclasses import dataclass
 
+# Verze v5 – horní pásy jsou jemnější, nižší a více zapuštěné do hlavního panelu.
+
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
 from PySide6.QtGui import (
     QColor,
@@ -100,13 +102,15 @@ class LogoOverlay(QWidget):
 
 
 class GoldButton(QPushButton):
-    """Vlastní zlaté tlačítko podobnější grafickému návrhu."""
+    """Vlastní zlaté tlačítko kreslené přes QPainter.
+    Nepoužívá emoji zámky, aby nebyly barevné jako systémové emoji.
+    """
 
     def __init__(self, text, parent=None):
         super().__init__(text, parent)
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(58)
-        self.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        self.setFont(QFont("Segoe UI", 19, QFont.Bold))
         self.setStyleSheet("background: transparent; border: none;")
         self._hovered = False
 
@@ -142,20 +146,43 @@ class GoldButton(QPushButton):
         painter.setPen(QPen(QColor(Colors.GOLD_LIGHT), 2))
         painter.drawRoundedRect(r, radius, radius)
 
-        # Vnitřní linka
-        inner = r.adjusted(6, 6, -6, -6)
+        # Jemné vnitřní hrany jako na referenci.
+        inner = r.adjusted(7, 7, -7, -7)
         painter.setPen(QPen(QColor("#9a6b30"), 1))
-        painter.drawLine(int(inner.left() + 45), int(inner.bottom() - 2), int(inner.right() - 20), int(inner.bottom() - 2))
+        painter.drawLine(int(inner.left() + 45), int(inner.bottom() - 2), int(inner.right() - 24), int(inner.bottom() - 2))
+        painter.drawLine(int(inner.left() + 45), int(inner.top() + 2), int(inner.right() - 24), int(inner.top() + 2))
 
-        # Malé boční šipky jako v návrhu
+        # Malé boční šipky.
         painter.setPen(QPen(QColor("#9a6b30"), 2))
-        painter.drawText(QRectF(8, 0, 18, self.height()), Qt.AlignCenter, "‹")
-        painter.drawText(QRectF(self.width() - 25, 0, 18, self.height()), Qt.AlignCenter, "›")
+        painter.setFont(QFont("Segoe UI Symbol", 17, QFont.Bold))
+        painter.drawText(QRectF(6, 0, 18, self.height()), Qt.AlignCenter, "‹")
+        painter.drawText(QRectF(self.width() - 24, 0, 18, self.height()), Qt.AlignCenter, "›")
+
+        # Text + ručně kreslený zámek, aby nebyl barevné emoji.
+        text_font = QFont("Segoe UI", 19, QFont.Bold)
+        painter.setFont(text_font)
+        fm = painter.fontMetrics()
+        text_w = fm.horizontalAdvance(self.text())
+        total_w = text_w + 44
+        start_x = r.center().x() - total_w / 2
+        icon_x = start_x
+        icon_y = r.center().y() - 9
+
+        pen = QPen(QColor(Colors.BUTTON_TEXT), 3)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        # Tělo zámku
+        painter.drawRoundedRect(QRectF(icon_x + 5, icon_y + 8, 18, 17), 3, 3)
+        # Oblouk zámku
+        painter.drawArc(QRectF(icon_x + 8, icon_y - 1, 12, 18), 0, 180 * 16)
+        # Díra zámku
+        painter.setBrush(QBrush(QColor(Colors.BUTTON_TEXT)))
+        painter.drawEllipse(QRectF(icon_x + 13, icon_y + 14, 3.5, 3.5))
+        painter.drawRect(QRectF(icon_x + 14, icon_y + 17, 1.5, 5))
 
         painter.setPen(QPen(QColor(Colors.BUTTON_TEXT)))
-        painter.setFont(self.font())
-        painter.drawText(r, Qt.AlignCenter, self.text())
-
+        painter.setFont(text_font)
+        painter.drawText(QRectF(start_x + 44, 0, text_w + 8, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text())
 
 class CipherButton(QPushButton):
     def __init__(self, text, name, parent=None):
@@ -163,8 +190,8 @@ class CipherButton(QPushButton):
         self.cipher_name = name
         self.selected = False
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(44)
-        self.setFont(QFont("Segoe UI", 12))
+        self.setMinimumHeight(43)
+        self.setFont(QFont("Segoe UI", 13))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.refresh_style()
 
@@ -246,38 +273,26 @@ class PirateCentralWidget(QWidget):
             return QPixmap(path)
 
     def create_widgets(self):
-        # Horní panely
+        # Horní panely jsou v této verzi kreslené přímo v paintEvent.
+        # Tyto průhledné rámečky slouží jen jako držáky pro případný text/ikony.
         self.header_left = QFrame(self)
         self.header_right = QFrame(self)
         for frame in (self.header_left, self.header_right):
-            frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {Colors.BLUE_HEADER};
-                    border-radius: 14px;
-                }}
-            """)
+            frame.setAttribute(Qt.WA_TranslucentBackground, True)
+            frame.setStyleSheet("background: transparent; border: none;")
 
-        self.sun_icon = QLabel("☼", self.header_left)
-        self.sun_icon.setFont(QFont("Segoe UI Symbol", 30))
-        self.sun_icon.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
-        self.sun_icon.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.sun_icon = QLabel("", self.header_left)
+        self.sun_icon.setStyleSheet("background: transparent;")
 
-        self.anchor_top = QLabel("⚓", self.header_right)
-        self.anchor_top.setFont(QFont("Segoe UI Symbol", 31))
-        self.anchor_top.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
-        self.anchor_top.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        self.anchor_top = QLabel("", self.header_right)
+        self.anchor_top.setStyleSheet("background: transparent;")
 
-        # Titulkové pásy
+        # Titulkové pásy jsou také kreslené v paintEvent, aby šel udělat výřez okolo loga.
         self.left_title_frame = QFrame(self)
         self.right_title_frame = QFrame(self)
         for frame in (self.left_title_frame, self.right_title_frame):
-            frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {Colors.BLUE_HEADER};
-                    border: 1px solid {Colors.BLUE_BORDER};
-                    border-radius: 14px;
-                }}
-            """)
+            frame.setAttribute(Qt.WA_TranslucentBackground, True)
+            frame.setStyleSheet("background: transparent; border: none;")
 
         self.left_title = QLabel("VYBER SI ŠIFRU (28)", self.left_title_frame)
         self.right_title = QLabel("TEXT K ZAŠIFROVÁNÍ", self.right_title_frame)
@@ -286,10 +301,8 @@ class PirateCentralWidget(QWidget):
             label.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
             label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
-        self.right_title_anchor = QLabel("⚓", self.right_title_frame)
-        self.right_title_anchor.setFont(QFont("Segoe UI Symbol", 20))
-        self.right_title_anchor.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
-        self.right_title_anchor.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        self.right_title_anchor = QLabel("", self.right_title_frame)
+        self.right_title_anchor.setStyleSheet("background: transparent;")
 
         # Levý panel se šiframi
         self.left_body = QFrame(self)
@@ -330,9 +343,9 @@ class PirateCentralWidget(QWidget):
         self.scroll_content = QWidget()
         self.scroll_content.setStyleSheet("background-color: #092137;")
         self.grid = QGridLayout(self.scroll_content)
-        self.grid.setContentsMargins(12, 12, 12, 12)
+        self.grid.setContentsMargins(10, 8, 10, 8)
         self.grid.setHorizontalSpacing(10)
-        self.grid.setVerticalSpacing(8)
+        self.grid.setVerticalSpacing(7)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
         self.scroll_area.setWidget(self.scroll_content)
@@ -344,13 +357,13 @@ class PirateCentralWidget(QWidget):
             ("🇬🇧  Britská vlajka", "Britská vlajka"),
             ("▦  Hebrejský kříž", "Hebrejský kříž"),
             ("✚  Malý polský kříž", "Malý polský kříž"),
-            ("📱  Mobil", "Mobil"),
+            ("▯  Mobil", "Mobil"),
             ("☾  Mobiž", "Mobiž"),
             ("☽  Moonovo písmo", "Moonovo písmo"),
             ("⋯−  Morseova abeceda", "Morseova abeceda"),
-            ("⛰  Morseova abeceda – hory", "Morseova abeceda – hory"),
-            ("🕺  Tančící figurky I/II", "Tančící figurky I/II"),
-            ("🕺  Tančící figurky II", "Tančící figurky II"),
+            ("▲▲  Morseova abeceda – hory", "Morseova abeceda – hory"),
+            ("♟  Tančící figurky I/II", "Tančící figurky I/II"),
+            ("♟  Tančící figurky II", "Tančící figurky II"),
             ("△  Zednářská šifra", "Zednářská šifra"),
             ("A↔Z  Záměna písmen (A=Z)", "Záměna písmen (A=Z)"),
             ("A=B\nA=Z  Záměna písmen za čísla", "Záměna písmen za čísla"),
@@ -372,8 +385,8 @@ class PirateCentralWidget(QWidget):
         self.input_text.setFont(QFont("Segoe UI", 14))
         self.input_text.setStyleSheet(self.text_edit_style())
 
-        self.encrypt_button = GoldButton("🔒  ZAŠIFROVAT", self)
-        self.decrypt_button = GoldButton("🔓  DEŠIFROVAT", self)
+        self.encrypt_button = GoldButton("ZAŠIFROVAT", self)
+        self.decrypt_button = GoldButton("DEŠIFROVAT", self)
         self.encrypt_button.clicked.connect(self.encrypt_action)
         self.decrypt_button.clicked.connect(self.decrypt_action)
 
@@ -385,7 +398,7 @@ class PirateCentralWidget(QWidget):
         self.output_text.setPlaceholderText("Zašifrovaný text se objeví zde...")
         self.output_text.setFont(QFont("Segoe UI", 14))
         self.output_text.setStyleSheet(self.text_edit_style())
-        self.output_text.setPlainText("Zašifrovaný text se objeví zde...")
+        # Text nechávám jako placeholder; skutečný výstup se doplní po kliknutí.
 
         self.output_star = QLabel("✦", self)
         self.output_star.setFont(QFont("Segoe UI Symbol", 46))
@@ -423,7 +436,9 @@ class PirateCentralWidget(QWidget):
         h = self.height()
 
         status_h = 24
-        board_x = max(20, int(w * 0.016))
+        # V4: hlavní panel je posazený podobně jako v referenci –
+        # není nalepený úplně k levému okraji a horní část má víc vzduchu.
+        board_x = max(28, int(w * 0.020))
         board_y = 28
         board_w = w - board_x * 2
         board_h = h - board_y - status_h - 18
@@ -431,36 +446,50 @@ class PirateCentralWidget(QWidget):
         board = QRect(board_x, board_y, board_w, board_h)
         center_x = board.center().x()
 
-        inner = 18
-        logo_size = min(230, max(190, int(board_w * 0.17)))
-        logo_rect = QRect(center_x - logo_size // 2, board_y - 6, logo_size, logo_size)
+        # Logo podobně jako v referenci. Důležité je, že pod ním nejsou titulkové panely.
+        # Logo v referenci sedí níž a není nalepené na horní rámeček.
+        # Menší velikost pomáhá tomu, aby titulkové pásy nepůsobily useknutě.
+        logo_size = min(212, max(190, int(board_w * 0.154)))
+        logo_rect = QRect(center_x - logo_size // 2, board_y + 7, logo_size, logo_size)
 
-        logo_gap = logo_size + 42
-        header_y = board_y + 20
-        header_h = 90
+        # Horní dekorativní panely.
+        inner = 18
+        logo_gap = logo_size + 52
+        # Horní dekorativní pásy: v referenci nejsou výrazné vysoké bloky,
+        # ale nízké, jemně zatmavené pruhy zapuštěné do hlavního panelu.
+        header_y = board_y + 28
+        header_h = 62
         header_w = int((board_w - logo_gap - inner * 2) / 2)
         header_left = QRect(board_x + inner, header_y, header_w, header_h)
         header_right = QRect(center_x + logo_gap // 2, header_y, header_w, header_h)
 
-        left_x = board_x + 46
-        right_gap = 26
-        content_w = board_w - 92
-        left_w = int((content_w - right_gap) * 0.49)
-        right_w = content_w - right_gap - left_w
-        right_x = left_x + left_w + right_gap
+        # Hlavní pracovní část. Rozměry jsou laděné pro okno 1408×768
+        # a zároveň se přepočítávají podle velikosti okna.
+        left_x = board_x + 45
+        right_margin = 50
+        middle_gap = 28
+        available = board_w - 45 - right_margin - middle_gap
+        left_w = int(available * 0.504)
+        right_w = available - left_w
+        right_x = left_x + left_w + middle_gap
 
+        # Titulkové pásy jsou níž – v referenci je mezi horní lištou a titulkem
+        # delší tmavý přechod, ne hned další panel.
         title_y = board_y + 138
-        title_h = 54
-        body_y = title_y + 62
-        body_h = board.bottom() - body_y - 62
+        title_h = 51
+        left_body_y = title_y + 54
+        left_body_h = board.bottom() - left_body_y - 64
 
-        # Titulky jsou zkrácené směrem k logu, aby pod ním nebyl velký widget.
-        title_cut = min(110, int(logo_size * 0.48))
+        # Titulky jsou zkrácené uprostřed kvůli logu.
+        title_cut = min(92, int(logo_size * 0.44))
         left_title = QRect(left_x, title_y, left_w - title_cut, title_h)
         right_title = QRect(right_x + title_cut, title_y, right_w - title_cut, title_h)
 
-        left_body = QRect(left_x, body_y, left_w, body_h)
-        right_body = QRect(right_x, body_y, right_w, body_h)
+        left_body = QRect(left_x, left_body_y, left_w, left_body_h)
+
+        # right_body je základní obdélník sloupce; jednotlivé pravé prvky se níže
+        # rozmístí podobně jako v referenci. Vstupní pole začíná níž než levý seznam.
+        right_body = QRect(right_x, left_body_y, right_w, left_body_h)
 
         return Rects(
             board=board,
@@ -472,7 +501,6 @@ class PirateCentralWidget(QWidget):
             left_body=left_body,
             right_body=right_body,
         )
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_layout_positions()
@@ -495,20 +523,21 @@ class PirateCentralWidget(QWidget):
         self.left_body.setGeometry(r.left_body)
         self.scroll_area.setGeometry(8, 8, r.left_body.width() - 16, r.left_body.height() - 16)
 
-        # Pravé prvky
+        # Pravé prvky – vstupní pole začíná níž než titulek, stejně jako v referenci.
         rb = r.right_body
-        self.input_text.setGeometry(rb.x(), rb.y(), rb.width(), 102)
+        input_y = r.board.y() + 252
+        self.input_text.setGeometry(rb.x(), input_y, rb.width(), 100)
 
-        btn_y = rb.y() + 122
-        btn_gap = 24
+        btn_y = input_y + 122
+        btn_gap = 26
         btn_w = (rb.width() - btn_gap) // 2
         self.encrypt_button.setGeometry(rb.x(), btn_y, btn_w, 62)
         self.decrypt_button.setGeometry(rb.x() + btn_w + btn_gap, btn_y, btn_w, 62)
 
-        result_y = btn_y + 82
+        result_y = btn_y + 84
         self.result_title.setGeometry(rb.x(), result_y, rb.width(), 30)
         out_y = result_y + 38
-        self.output_text.setGeometry(rb.x(), out_y, rb.width(), max(120, r.board.bottom() - out_y - 66))
+        self.output_text.setGeometry(rb.x(), out_y, rb.width(), max(120, r.board.bottom() - out_y - 40))
         self.output_star.setGeometry(rb.right() - 76, self.output_text.geometry().bottom() - 76, 54, 54)
         self.output_star.raise_()
 
@@ -552,18 +581,152 @@ class PirateCentralWidget(QWidget):
         painter.drawRoundedRect(board, 24, 24)
 
         # Jemné vnitřní linky jako v referenci
-        painter.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        painter.setPen(QPen(QColor(255, 255, 255, 24), 1))
         painter.drawRoundedRect(board.adjusted(12, 12, -12, -12), 18, 18)
-        painter.setPen(QPen(QColor(Colors.BLUE_BORDER), 1))
+        painter.setPen(QPen(QColor(52, 97, 127, 165), 1))
         painter.drawLine(board.left() + 20, board.top() + 92, board.right() - 20, board.top() + 92)
 
+        # Horní panely a titulkové pásy se kreslí jako grafika, ne jako obdélníkové widgety.
+        self.draw_panel_round_rect(painter, self.rects.header_left, 15, False)
+        self.draw_panel_round_rect(painter, self.rects.header_right, 15, False)
+        self.draw_title_tab(painter, self.rects.left_title, "left")
+        self.draw_title_tab(painter, self.rects.right_title, "right")
+
         # Dekorační body a kotvy
-        painter.setPen(QPen(QColor(Colors.GOLD_TEXT), 2))
+        deco = QColor(Colors.GOLD_TEXT)
+        deco.setAlpha(210)
+        painter.setPen(QPen(deco, 2))
         painter.setFont(QFont("Segoe UI Symbol", 16))
         painter.drawText(int(board.left() + 13), int(board.top() + 25), "•")
         painter.drawText(int(board.right() - 28), int(board.top() + 28), "×")
         painter.drawText(int(board.left() + 12), int(board.bottom() - 12), "⊙")
-        painter.drawText(int(board.right() - 42), int(board.bottom() - 12), "⚓")
+        # Dekorace kreslené ručně, aby nevznikaly barevné systémové emoji.
+        if self.rects:
+            self.draw_compass(painter, self.rects.header_left.left() + 42, self.rects.header_left.center().y(), 30, alpha=120)
+            self.draw_anchor(painter, self.rects.header_right.right() - 43, self.rects.header_right.center().y(), 30, alpha=170)
+            self.draw_anchor(painter, self.rects.right_title.right() - 34, self.rects.right_title.center().y(), 20, alpha=175)
+            self.draw_anchor(painter, int(board.right() - 28), int(board.bottom() - 18), 18, alpha=205)
+
+
+    def draw_panel_round_rect(self, painter, rect: QRect, radius=14, border=False):
+        """Jemný horní pás.
+
+        V referenci horní oblast nepůsobí jako samostatné výrazné tlačítko,
+        ale jako velmi jemně zapuštěný pruh v hlavním modrém panelu.
+        Proto používáme průhledné barvy a jen slabý vnitřní lesk.
+        """
+        rr = QRectF(rect)
+        path = QPainterPath()
+        path.addRoundedRect(rr, radius, radius)
+
+        grad = QLinearGradient(rr.left(), rr.top(), rr.right(), rr.bottom())
+        c1 = QColor("#164564"); c1.setAlpha(88)
+        c2 = QColor("#10334f"); c2.setAlpha(58)
+        c3 = QColor("#092338"); c3.setAlpha(42)
+        grad.setColorAt(0.00, c1)
+        grad.setColorAt(0.55, c2)
+        grad.setColorAt(1.00, c3)
+        painter.fillPath(path, QBrush(grad))
+
+        # horní jemný odlesk
+        painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
+        painter.drawLine(int(rr.left() + radius), int(rr.top() + 1), int(rr.right() - radius), int(rr.top() + 1))
+
+        # spodní linka je lehce viditelná, podobně jako v předloze
+        painter.setPen(QPen(QColor(52, 97, 127, 55), 1))
+        painter.drawLine(int(rr.left() + 8), int(rr.bottom()), int(rr.right() - 8), int(rr.bottom()))
+
+        if border:
+            pen_color = QColor(Colors.BLUE_BORDER)
+            pen_color.setAlpha(70)
+            painter.setPen(QPen(pen_color, 1))
+            painter.drawPath(path)
+
+    def draw_title_tab(self, painter, rect: QRect, side: str):
+        """Kreslí titulkový panel s jemným zkosením u loga."""
+        rr = QRectF(rect)
+        r = 14
+        notch = min(26, max(16, int(rect.width() * 0.05)))
+        path = QPainterPath()
+
+        if side == "left":
+            path.moveTo(rr.left() + r, rr.top())
+            path.lineTo(rr.right() - notch, rr.top())
+            path.quadTo(rr.right(), rr.top(), rr.right(), rr.top() + r)
+            path.lineTo(rr.right(), rr.bottom() - r)
+            path.quadTo(rr.right(), rr.bottom(), rr.right() - r, rr.bottom())
+            path.lineTo(rr.left() + r, rr.bottom())
+            path.quadTo(rr.left(), rr.bottom(), rr.left(), rr.bottom() - r)
+            path.lineTo(rr.left(), rr.top() + r)
+            path.quadTo(rr.left(), rr.top(), rr.left() + r, rr.top())
+        else:
+            path.moveTo(rr.left() + r, rr.top())
+            path.lineTo(rr.right() - r, rr.top())
+            path.quadTo(rr.right(), rr.top(), rr.right(), rr.top() + r)
+            path.lineTo(rr.right(), rr.bottom() - r)
+            path.quadTo(rr.right(), rr.bottom(), rr.right() - r, rr.bottom())
+            path.lineTo(rr.left() + notch, rr.bottom())
+            path.quadTo(rr.left(), rr.bottom(), rr.left(), rr.bottom() - r)
+            path.lineTo(rr.left(), rr.top() + r)
+            path.quadTo(rr.left(), rr.top(), rr.left() + r, rr.top())
+
+        grad = QLinearGradient(rr.left(), rr.top(), rr.right(), rr.bottom())
+        grad.setColorAt(0, QColor("#164261"))
+        grad.setColorAt(1, QColor("#123754"))
+        painter.fillPath(path, QBrush(grad))
+        painter.setPen(QPen(QColor(Colors.BLUE_BORDER), 1))
+        painter.drawPath(path)
+
+        # jemný vnitřní lesk
+        inner = rr.adjusted(18, 7, -18, -7)
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
+        painter.drawLine(int(inner.left()), int(inner.top()), int(inner.right()), int(inner.top()))
+
+    def draw_compass(self, painter, center_x, center_y, size, alpha=155):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        icon_color = QColor(Colors.GOLD_TEXT)
+        icon_color.setAlpha(alpha)
+        pen = QPen(icon_color, 2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        r = size / 2
+        painter.drawEllipse(QRectF(center_x - r, center_y - r, size, size))
+        painter.drawEllipse(QRectF(center_x - r * 0.35, center_y - r * 0.35, r * 0.7, r * 0.7))
+        for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0), (0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (-0.7, -0.7)]:
+            painter.drawLine(int(center_x), int(center_y), int(center_x + dx * r * 1.28), int(center_y + dy * r * 1.28))
+        painter.setFont(QFont("Segoe UI", max(7, int(size * 0.18)), QFont.Bold))
+        painter.drawText(QRectF(center_x - 9, center_y - r - 18, 18, 14), Qt.AlignCenter, "N")
+        painter.drawText(QRectF(center_x + r + 2, center_y - 7, 18, 14), Qt.AlignCenter, "E")
+        painter.drawText(QRectF(center_x - 9, center_y + r + 2, 18, 14), Qt.AlignCenter, "S")
+        painter.drawText(QRectF(center_x - r - 20, center_y - 7, 18, 14), Qt.AlignCenter, "W")
+        painter.restore()
+
+    def draw_anchor(self, painter, center_x, center_y, size, alpha=205):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        icon_color = QColor(Colors.GOLD_TEXT)
+        icon_color.setAlpha(alpha)
+        pen = QPen(icon_color, max(2, int(size * 0.08)))
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        s = size
+        # kruh nahoře
+        painter.drawEllipse(QRectF(center_x - s * 0.10, center_y - s * 0.48, s * 0.20, s * 0.20))
+        # dřík
+        painter.drawLine(int(center_x), int(center_y - s * 0.28), int(center_x), int(center_y + s * 0.25))
+        # příčka
+        painter.drawLine(int(center_x - s * 0.22), int(center_y - s * 0.05), int(center_x + s * 0.22), int(center_y - s * 0.05))
+        # spodní oblouk a háky
+        path = QPainterPath()
+        path.moveTo(center_x - s * 0.42, center_y + s * 0.08)
+        path.cubicTo(center_x - s * 0.32, center_y + s * 0.45, center_x + s * 0.32, center_y + s * 0.45, center_x + s * 0.42, center_y + s * 0.08)
+        painter.drawPath(path)
+        painter.drawLine(int(center_x - s * 0.42), int(center_y + s * 0.08), int(center_x - s * 0.55), int(center_y + s * 0.18))
+        painter.drawLine(int(center_x - s * 0.42), int(center_y + s * 0.08), int(center_x - s * 0.33), int(center_y + s * 0.26))
+        painter.drawLine(int(center_x + s * 0.42), int(center_y + s * 0.08), int(center_x + s * 0.55), int(center_y + s * 0.18))
+        painter.drawLine(int(center_x + s * 0.42), int(center_y + s * 0.08), int(center_x + s * 0.33), int(center_y + s * 0.26))
+        painter.restore()
 
     def select_cipher(self, name):
         self.selected_cipher = name
