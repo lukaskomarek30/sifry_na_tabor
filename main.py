@@ -1,32 +1,21 @@
+APP_VERSION = "0.0.1"
 import os
 import sys
+import ctypes
+import unicodedata
 from dataclasses import dataclass
 
-# Verze v5 – horní pásy jsou jemnější, nižší a více zapuštěné do hlavního panelu.
-
-from PySide6.QtCore import Qt, QRect, QRectF, QSize
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QIcon,
-    QImage,
-    QLinearGradient,
-    QPainter,
-    QPainterPath,
-    QPixmap,
-    QPen,
-    QBrush,
-)
+from PySide6.QtCore import Qt, QRect, QSize
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTextOption, QPen
 from PySide6.QtWidgets import (
     QApplication,
-    QFrame,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QTextEdit,
-    QVBoxLayout,
     QWidget,
     QGridLayout,
 )
@@ -37,82 +26,66 @@ except Exception:
     Image = None
 
 
-@dataclass
-class Rects:
-    board: QRect
-    header_left: QRect
-    header_right: QRect
-    logo: QRect
-    left_title: QRect
-    right_title: QRect
-    left_body: QRect
-    right_body: QRect
+# ============================================================
+# ŠIFRÁTOR MRAVENIŠTĚ – UI skin přes icons/BG.png
+#
+# Očekávaná struktura:
+#
+# C:\Users\komarek\Desktop\Šifry\
+# ├── main.py
+# └── icons\
+#     ├── BG.png                    <- čistý UI skin / pozadí
+#     ├── logo.png
+#     ├── binarni_ctverce.png
+#     ├── brailovo_pismo.png
+#     ├── ...
+#     ├── lock_closed.png
+#     └── lock_open.png
+#
+# DŮLEŽITÉ:
+# Tato verze už nekreslí modré rámečky přes QPainter.
+# Bere čisté BG.png jako hotový grafický skin a přes něj
+# pokládá jen funkční prvky: logo, seznam šifer, textová pole,
+# tlačítka a status.
+# ============================================================
+
+
+BASE_W = 1672
+BASE_H = 941
 
 
 class Colors:
-    GOLD = "#cfa55e"
-    GOLD_LIGHT = "#f1d79b"
-    GOLD_TEXT = "#efbf67"
-    GOLD_DARK = "#6b431a"
-    BLUE_MAIN = "#0d2a43"
-    BLUE_HEADER = "#153d5f"
-    BLUE_ITEM = "#1c4c74"
-    BLUE_ITEM_HOVER = "#255d8d"
-    BLUE_BORDER = "#34617f"
-    DARK_BOX = "#03111c"
-    TEXT_LIGHT = "#f4f4f4"
-    PLACEHOLDER = "#9fb0be"
-    STATUS = "#143b5b"
-    BUTTON_TEXT = "#3a220d"
+    GOLD = "#c89a4c"
+    GOLD_LIGHT = "#f3d79a"
+    GOLD_TEXT = "#e7c681"
+    DARK_TEXT = "#1f1205"
+    TEXT_LIGHT = "#ead8b3"
+    PLACEHOLDER = "#a8a295"
+    SELECT_CYAN = "#15c1cc"
 
 
-class LogoOverlay(QWidget):
-    """Vrstva s logem. Je transparentní a kreslí pouze pixmapu loga."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap = QPixmap()
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WA_NoSystemBackground, True)
-        self.setAutoFillBackground(False)
-        self.setStyleSheet("background: transparent;")
-
-    def set_pixmap(self, pixmap: QPixmap):
-        self.pixmap = pixmap
-        self.update()
-
-    def paintEvent(self, event):
-        if self.pixmap.isNull():
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-        target = QRectF(0, 0, self.width(), self.height())
-        scaled = self.pixmap.scaled(
-            self.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        x = (self.width() - scaled.width()) // 2
-        y = (self.height() - scaled.height()) // 2
-        painter.drawPixmap(x, y, scaled)
+@dataclass
+class CipherItem:
+    name: str
+    icon: str
 
 
-class GoldButton(QPushButton):
-    """Vlastní zlaté tlačítko kreslené přes QPainter.
-    Nepoužívá emoji zámky, aby nebyly barevné jako systémové emoji.
+class TransparentActionButton(QPushButton):
+    """Klikací oblast nad grafickým tlačítkem ve skinu.
+
+    Text a zámek se kreslí ručně, aby byly vždy přesně uprostřed tlačítka.
     """
 
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(58)
-        self.setFont(QFont("Segoe UI", 19, QFont.Bold))
-        self.setStyleSheet("background: transparent; border: none;")
+    def __init__(self, text: str, icon_path: str = "", parent=None):
+        super().__init__("", parent)
+        self.full_text = text
+        self.lock_pixmap = QPixmap(icon_path) if icon_path and os.path.exists(icon_path) else QPixmap()
         self._hovered = False
+
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFont(QFont("Georgia", 20, QFont.Bold))
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet("background: transparent; border: none;")
 
     def enterEvent(self, event):
         self._hovered = True
@@ -127,73 +100,95 @@ class GoldButton(QPushButton):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        r = QRectF(2, 2, self.width() - 4, self.height() - 4)
-        radius = 20
-
-        grad = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        # Jemný hover efekt, aby zůstal vidět grafický skin tlačítka.
         if self._hovered:
-            grad.setColorAt(0, QColor("#f0cf86"))
-            grad.setColorAt(1, QColor("#d0a151"))
-        else:
-            grad.setColorAt(0, QColor("#e7c373"))
-            grad.setColorAt(1, QColor("#cfa55e"))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(255, 220, 120, 28))
+            painter.drawRoundedRect(self.rect().adjusted(3, 3, -3, -3), 10, 10)
 
-        path = QPainterPath()
-        path.addRoundedRect(r, radius, radius)
-        painter.fillPath(path, QBrush(grad))
-
-        painter.setPen(QPen(QColor(Colors.GOLD_LIGHT), 2))
-        painter.drawRoundedRect(r, radius, radius)
-
-        # Jemné vnitřní hrany jako na referenci.
-        inner = r.adjusted(7, 7, -7, -7)
-        painter.setPen(QPen(QColor("#9a6b30"), 1))
-        painter.drawLine(int(inner.left() + 45), int(inner.bottom() - 2), int(inner.right() - 24), int(inner.bottom() - 2))
-        painter.drawLine(int(inner.left() + 45), int(inner.top() + 2), int(inner.right() - 24), int(inner.top() + 2))
-
-        # Malé boční šipky.
-        painter.setPen(QPen(QColor("#9a6b30"), 2))
-        painter.setFont(QFont("Segoe UI Symbol", 17, QFont.Bold))
-        painter.drawText(QRectF(6, 0, 18, self.height()), Qt.AlignCenter, "‹")
-        painter.drawText(QRectF(self.width() - 24, 0, 18, self.height()), Qt.AlignCenter, "›")
-
-        # Text + ručně kreslený zámek, aby nebyl barevné emoji.
-        text_font = QFont("Segoe UI", 19, QFont.Bold)
-        painter.setFont(text_font)
+        painter.setFont(self.font())
         fm = painter.fontMetrics()
-        text_w = fm.horizontalAdvance(self.text())
-        total_w = text_w + 44
-        start_x = r.center().x() - total_w / 2
-        icon_x = start_x
-        icon_y = r.center().y() - 9
 
-        pen = QPen(QColor(Colors.BUTTON_TEXT), 3)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        # Tělo zámku
-        painter.drawRoundedRect(QRectF(icon_x + 5, icon_y + 8, 18, 17), 3, 3)
-        # Oblouk zámku
-        painter.drawArc(QRectF(icon_x + 8, icon_y - 1, 12, 18), 0, 180 * 16)
-        # Díra zámku
-        painter.setBrush(QBrush(QColor(Colors.BUTTON_TEXT)))
-        painter.drawEllipse(QRectF(icon_x + 13, icon_y + 14, 3.5, 3.5))
-        painter.drawRect(QRectF(icon_x + 14, icon_y + 17, 1.5, 5))
+        # Větší zámek než předtím.
+        icon_size = max(46, min(74, int(self.height() * 0.88)))
+        gap = max(14, int(self.width() * 0.040))
+        text_w = fm.horizontalAdvance(self.full_text)
 
-        painter.setPen(QPen(QColor(Colors.BUTTON_TEXT)))
-        painter.setFont(text_font)
-        painter.drawText(QRectF(start_x + 44, 0, text_w + 8, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text())
+        center_y = self.height() // 2
+        vertical_shift = max(2, int(self.height() * 0.04))
+
+        # Text bude mít střed přesně ve středu tlačítka.
+        # Malý svislý posun dolů pomůže, aby opticky seděl přesněji do středu dekorativního tlačítka.
+        text_x = int((self.width() - text_w) / 2)
+        icon_x = int(text_x - gap - icon_size)
+
+        # Kdyby bylo tlačítko při zmenšeném okně moc úzké, poskládáme ikonu+text jako skupinu.
+        if icon_x < 8:
+            total_w = icon_size + gap + text_w
+            group_x = int((self.width() - total_w) / 2)
+            icon_x = group_x
+            text_x = group_x + icon_size + gap
+
+        # Zvětšená ikona zámku.
+        if not self.lock_pixmap.isNull():
+            scaled = self.lock_pixmap.scaled(
+                QSize(icon_size, icon_size),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            draw_icon_x = icon_x + (icon_size - scaled.width()) // 2
+            draw_icon_y = center_y - scaled.height() // 2 + vertical_shift
+            painter.drawPixmap(draw_icon_x, draw_icon_y, scaled)
+
+        text_color = QColor("#fff0bd") if self._hovered else QColor(Colors.GOLD_LIGHT)
+        painter.setPen(QPen(text_color))
+        text_rect = QRect(
+            text_x,
+            vertical_shift,
+            text_w + 10,
+            self.height() - vertical_shift,
+        )
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self.full_text)
+
 
 class CipherButton(QPushButton):
-    def __init__(self, text, name, parent=None):
-        super().__init__(text, parent)
-        self.cipher_name = name
+    def __init__(self, item: CipherItem, icon_path: str, parent=None):
+        super().__init__(item.name, parent)
+        self.item = item
+        self.full_text = item.name
         self.selected = False
+
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(43)
-        self.setFont(QFont("Segoe UI", 13))
+        self.setMinimumHeight(50)
+        self.setMinimumWidth(0)
+        self.setFont(QFont("Georgia", 12))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        if icon_path and os.path.exists(icon_path):
+            self.setIcon(QIcon(icon_path))
+            self.setIconSize(QSize(38, 38))
+
         self.refresh_style()
+        self.update_elided_text()
+
+    def minimumSizeHint(self):
+        return QSize(40, self.minimumHeight())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_elided_text()
+
+    def update_elided_text(self):
+        icon_w = self.iconSize().width() if not self.icon().isNull() else 0
+        available = max(35, self.width() - icon_w - 34)
+        shown = self.fontMetrics().elidedText(self.full_text, Qt.ElideRight, available)
+
+        if self.text() != shown:
+            self.setText(shown)
+
+        self.setToolTip(self.full_text)
 
     def set_selected(self, selected: bool):
         self.selected = selected
@@ -201,56 +196,96 @@ class CipherButton(QPushButton):
 
     def refresh_style(self):
         if self.selected:
-            border = Colors.GOLD
-            bg = "#35536d"
+            border = Colors.SELECT_CYAN
+            bg = "rgba(0, 120, 130, 105)"
             width = 2
         else:
-            border = "#4b7692"
-            bg = Colors.BLUE_ITEM
+            border = "rgba(165, 113, 49, 120)"
+            bg = "rgba(7, 18, 22, 155)"
             width = 1
 
         self.setStyleSheet(f"""
             QPushButton {{
-                background-color: {bg};
                 color: {Colors.TEXT_LIGHT};
+                text-align: left;
                 border: {width}px solid {border};
                 border-radius: 8px;
-                padding-left: 12px;
-                padding-right: 8px;
-                text-align: left;
+                padding-left: 8px;
+                padding-right: 4px;
+                background-color: {bg};
             }}
             QPushButton:hover {{
-                background-color: {Colors.BLUE_ITEM_HOVER};
+                border: 2px solid {Colors.GOLD_LIGHT};
+                background-color: rgba(20, 45, 50, 180);
             }}
         """)
+        self.update_elided_text()
 
 
-class PirateCentralWidget(QWidget):
+class SifratorSkinWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.assets_path = os.path.dirname(os.path.abspath(__file__))
-        self.bg_path = self.find_asset(["BG.png", "bg.png", "background.png"])
-        self.logo_path = self.find_asset(["logo.png", "logo(1).png", "logo_cropped.png"])
 
-        self.bg_pixmap = QPixmap(self.bg_path) if self.bg_path else QPixmap()
+        self.assets_path = os.path.dirname(os.path.abspath(__file__))
+        self.icons_path = os.path.join(self.assets_path, "icons")
+
+        # Čisté BG je přímo ve složce icons/BG.png.
+        self.skin_path = self.find_asset(["BG.png", "bg.png"])
+        self.logo_path = self.find_asset(["logo.png", "Logo.png"])
+
+        self.skin_pixmap = QPixmap(self.skin_path) if self.skin_path else QPixmap()
         self.logo_pixmap = self.load_logo_pixmap(self.logo_path) if self.logo_path else QPixmap()
 
-        self.selected_cipher = "Morseova abeceda"
+        self.ciphers = self.build_cipher_list()
+        self.selected_cipher = "Morseova abeceda – hory"
+        self.result_mode = None
         self.cipher_buttons = []
-        self.rects = None
 
-        self.setMinimumSize(1200, 700)
-        self.setAutoFillBackground(False)
-
+        self.setMinimumSize(1200, 675)
         self.create_widgets()
+        self.print_missing_assets()
         self.update_layout_positions()
 
+    # ------------------------------------------------------------
+    # Souřadnice a assety
+    # ------------------------------------------------------------
+
+    def sx(self):
+        return self.width() / BASE_W
+
+    def sy(self):
+        return self.height() / BASE_H
+
+    def sc(self):
+        return min(self.sx(), self.sy())
+
+    def sr(self, x, y, w, h):
+        return QRect(
+            int(x * self.sx()),
+            int(y * self.sy()),
+            int(w * self.sx()),
+            int(h * self.sy()),
+        )
+
+    def fs(self, size):
+        return max(8, int(size * self.sc()))
+
     def find_asset(self, names):
-        for name in names:
-            path = os.path.join(self.assets_path, name)
-            if os.path.exists(path):
-                return path
+        for folder in (self.icons_path, self.assets_path):
+            for name in names:
+                path = os.path.join(folder, name)
+                if os.path.exists(path):
+                    return path
         return None
+
+    def icon_path(self, file_name):
+        return os.path.join(self.icons_path, file_name)
+
+    def load_pixmap(self, file_name):
+        path = self.icon_path(file_name)
+        if os.path.exists(path):
+            return QPixmap(path)
+        return QPixmap()
 
     def load_logo_pixmap(self, path):
         if not path:
@@ -272,66 +307,202 @@ class PirateCentralWidget(QWidget):
         except Exception:
             return QPixmap(path)
 
+    def print_missing_assets(self):
+        required = ["BG.png", "logo.png", "lock_closed.png", "lock_open.png"]
+        required += [item.icon for item in self.ciphers]
+
+        missing = []
+        for file_name in required:
+            if not os.path.exists(self.icon_path(file_name)):
+                missing.append(file_name)
+
+        if missing:
+            print("\nCHYBĚJÍCÍ SOUBORY VE SLOŽCE icons:")
+            for file_name in missing:
+                print(" -", file_name)
+            print()
+        else:
+            print("Všechny potřebné soubory ve složce icons byly nalezeny.")
+
+    # ------------------------------------------------------------
+    # Data šifer
+    # ------------------------------------------------------------
+
+    def build_cipher_list(self):
+        return [
+            CipherItem("Binární čtverce", "binarni_ctverce.png"),
+            CipherItem("Brailovo písmo", "brailovo_pismo.png"),
+            CipherItem("Britská vlajka", "britska_vlajka.png"),
+            CipherItem("Čtverec", "ctverec.png"),
+            CipherItem("Hebrejský kříž", "hebrejsky_kriz.png"),
+            CipherItem("Malý polský kříž", "maly_polsky_kriz.png"),
+            CipherItem("Mobil", "mobil.png"),
+            CipherItem("Moonovo písmo", "moonovo_pismo.png"),
+            CipherItem("Morseova abeceda", "morseova_abeceda.png"),
+            CipherItem("Morseova abeceda – hory", "morseova_hory.png"),
+            CipherItem("Morseova abeceda – pila", "morseova_pila.png"),
+            CipherItem("Morseova abeceda – stromy", "morseova_stromy.png"),
+            CipherItem("Mříž", "mriz.png"),
+            CipherItem("Okno", "okno.png"),
+            CipherItem("Pavoučí síť", "pavouci_sit.png"),
+            CipherItem("Posunková abeceda", "posunkova_abeceda.png"),
+            CipherItem("Pseudo-Čína", "pseudo_cina.png"),
+            CipherItem("Semafor", "semafor.png"),
+            CipherItem("SuperKrychle", "superkrychle.png"),
+            CipherItem("Tančící figurky", "tancici_figurky.png"),
+            CipherItem("Tančící figurky II", "tancici_figurky_2.png"),
+            CipherItem("Velký polský kříž", "velky_polsky_kriz.png"),
+            CipherItem("Velký polský kříž (26 znaků)", "velky_polsky_kriz_26.png"),
+            CipherItem("Vlčácká šifra", "vlcacka_sifra.png"),
+            CipherItem("Záměna písmen (A=Z)", "zamena_pismen_a_z.png"),
+            CipherItem("Záměna písmen za čísla (A=01, Z=26)", "zamena_cisla_a01_z26.png"),
+            CipherItem("Záměna písmen za čísla (A=26, Z=01)", "zamena_cisla_a26_z01.png"),
+            CipherItem("Zednářská šifra", "zednarska_sifra.png"),
+            CipherItem("Zlomky", "zlomky.png"),
+        ]
+
+    def selected_icon_file(self):
+        for item in self.ciphers:
+            if item.name == self.selected_cipher:
+                return item.icon
+        return ""
+
+    # ------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------
+
     def create_widgets(self):
-        # Horní panely jsou v této verzi kreslené přímo v paintEvent.
-        # Tyto průhledné rámečky slouží jen jako držáky pro případný text/ikony.
-        self.header_left = QFrame(self)
-        self.header_right = QFrame(self)
-        for frame in (self.header_left, self.header_right):
-            frame.setAttribute(Qt.WA_TranslucentBackground, True)
-            frame.setStyleSheet("background: transparent; border: none;")
+        self.logo_label = QLabel(self)
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setStyleSheet("background: transparent;")
 
-        self.sun_icon = QLabel("", self.header_left)
-        self.sun_icon.setStyleSheet("background: transparent;")
+        self.title_left = QLabel(f"VYBER SI ŠIFRU ({len(self.ciphers)})", self)
+        self.title_left.setStyleSheet(f"color: {Colors.GOLD_LIGHT}; background: transparent;")
 
-        self.anchor_top = QLabel("", self.header_right)
-        self.anchor_top.setStyleSheet("background: transparent;")
+        self.search_edit = QLineEdit(self)
+        self.search_edit.setPlaceholderText("Hledej šifru...")
+        self.search_edit.textChanged.connect(self.filter_ciphers)
 
-        # Titulkové pásy jsou také kreslené v paintEvent, aby šel udělat výřez okolo loga.
-        self.left_title_frame = QFrame(self)
-        self.right_title_frame = QFrame(self)
-        for frame in (self.left_title_frame, self.right_title_frame):
-            frame.setAttribute(Qt.WA_TranslucentBackground, True)
-            frame.setStyleSheet("background: transparent; border: none;")
+        self.search_icon = QLabel("⌕", self)
+        self.search_icon.setAlignment(Qt.AlignCenter)
+        self.search_icon.setStyleSheet(f"color: {Colors.GOLD}; background: transparent;")
 
-        self.left_title = QLabel("VYBER SI ŠIFRU (28)", self.left_title_frame)
-        self.right_title = QLabel("TEXT K ZAŠIFROVÁNÍ", self.right_title_frame)
-        for label in (self.left_title, self.right_title):
-            label.setFont(QFont("Segoe UI", 18, QFont.Bold))
-            label.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
-            label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
 
-        self.right_title_anchor = QLabel("", self.right_title_frame)
-        self.right_title_anchor.setStyleSheet("background: transparent;")
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background: transparent;")
+        self.scroll_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.grid = QGridLayout(self.scroll_content)
+        self.grid.setContentsMargins(8, 8, 10, 8)
+        self.grid.setHorizontalSpacing(8)
+        self.grid.setVerticalSpacing(6)
+        self.grid.setAlignment(Qt.AlignTop)
+        self.grid.setColumnStretch(0, 1)
+        self.grid.setColumnStretch(1, 1)
+        self.scroll_area.setWidget(self.scroll_content)
 
-        # Levý panel se šiframi
-        self.left_body = QFrame(self)
-        self.left_body.setStyleSheet(f"""
-            QFrame {{
-                background-color: #092137;
-                border: 1px solid {Colors.BLUE_BORDER};
-                border-radius: 14px;
+        for index, item in enumerate(self.ciphers):
+            btn = CipherButton(item, self.icon_path(item.icon), self.scroll_content)
+            btn.clicked.connect(lambda checked=False, name=item.name: self.select_cipher(name))
+            self.grid.addWidget(btn, index // 2, index % 2, alignment=Qt.AlignTop)
+            self.cipher_buttons.append(btn)
+
+        self.selected_title = QLabel(self)
+        self.selected_title.setAlignment(Qt.AlignVCenter | Qt.AlignCenter)
+        self.selected_title.setStyleSheet("color: #f0d19a; background: transparent;")
+
+        self.selected_icon = QLabel(self)
+        self.selected_icon.setAlignment(Qt.AlignCenter)
+        self.selected_icon.setStyleSheet("background: transparent;")
+
+        self.input_label = QLabel("ZADEJ TAJNOU ZPRÁVU", self)
+        self.input_label.setAlignment(Qt.AlignVCenter | Qt.AlignCenter)
+        self.input_label.setStyleSheet(f"color: {Colors.GOLD_LIGHT}; background: transparent;")
+
+        self.input_text = QTextEdit(self)
+        self.input_text.setPlaceholderText("Zadej tajnou zprávu...")
+
+        self.encrypt_button = TransparentActionButton("ZAŠIFROVAT", self.icon_path("lock_closed.png"), self)
+        self.decrypt_button = TransparentActionButton("DEŠIFROVAT", self.icon_path("lock_open.png"), self)
+        self.encrypt_button.clicked.connect(self.encrypt_action)
+        self.decrypt_button.clicked.connect(self.decrypt_action)
+
+        self.result_title = QLabel("VÝSLEDEK", self)
+        self.result_title.setStyleSheet(f"color: {Colors.GOLD_LIGHT}; background: transparent;")
+
+        self.output_text = QTextEdit(self)
+        self.output_text.setPlaceholderText("Zašifrovaný text se objeví zde...")
+
+        self.status = QLabel(self)
+        self.status.setStyleSheet("background: transparent; color: #d9c697;")
+
+        self.apply_static_styles()
+        self.refresh_cipher_styles()
+        self.update_selected_header()
+        self.update_status()
+
+    def apply_static_styles(self):
+        self.search_edit.setStyleSheet(f"""
+            QLineEdit {{
+                color: {Colors.TEXT_LIGHT};
+                background: rgba(0, 0, 0, 0);
+                border: none;
+                padding-left: 16px;
+                padding-right: 58px;
+                selection-background-color: {Colors.GOLD};
+                selection-color: #111111;
+            }}
+            QLineEdit::placeholder {{
+                color: {Colors.PLACEHOLDER};
             }}
         """)
 
-        self.scroll_area = QScrollArea(self.left_body)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        input_text_style = f"""
+            QTextEdit {{
+                color: {Colors.TEXT_LIGHT};
+                background: rgba(0, 0, 0, 0);
+                border: none;
+                padding: 0px;
+                selection-background-color: {Colors.GOLD};
+                selection-color: #111111;
+            }}
+            QTextEdit::placeholder {{
+                color: {Colors.PLACEHOLDER};
+            }}
+        """
+        output_text_style = f"""
+            QTextEdit {{
+                color: {Colors.TEXT_LIGHT};
+                background: rgba(0, 0, 0, 0);
+                border: none;
+                padding: 0px;
+                selection-background-color: {Colors.GOLD};
+                selection-color: #111111;
+            }}
+            QTextEdit::placeholder {{
+                color: {Colors.PLACEHOLDER};
+            }}
+        """
+        self.input_text.setStyleSheet(input_text_style)
+        self.output_text.setStyleSheet(output_text_style)
+
         self.scroll_area.setStyleSheet(f"""
             QScrollArea {{
-                background-color: #092137;
+                background: rgba(0, 0, 0, 0);
                 border: none;
             }}
             QScrollBar:vertical {{
-                background: #0a2034;
+                background: rgba(20, 17, 12, 130);
                 width: 10px;
-                margin: 4px 0px 4px 0px;
+                margin: 4px 2px 4px 2px;
                 border-radius: 5px;
             }}
             QScrollBar::handle:vertical {{
-                background: #6d7d86;
-                min-height: 45px;
+                background: #9a8768;
+                min-height: 42px;
                 border-radius: 5px;
             }}
             QScrollBar::add-line:vertical,
@@ -340,448 +511,312 @@ class PirateCentralWidget(QWidget):
             }}
         """)
 
-        self.scroll_content = QWidget()
-        self.scroll_content.setStyleSheet("background-color: #092137;")
-        self.grid = QGridLayout(self.scroll_content)
-        self.grid.setContentsMargins(10, 8, 10, 8)
-        self.grid.setHorizontalSpacing(10)
-        self.grid.setVerticalSpacing(7)
-        self.grid.setColumnStretch(0, 1)
-        self.grid.setColumnStretch(1, 1)
-        self.scroll_area.setWidget(self.scroll_content)
+    def update_layout_positions(self):
+        # Logo – menší a přesně vycentrované do horního kruhu v BG.png.
+        # Původně bylo moc nízko/velké a zasahovalo do textů vpravo.
+        self.logo_label.setGeometry(self.sr(740, 38, 195, 190))
+        if not self.logo_pixmap.isNull():
+            pix = self.logo_pixmap.scaled(
+                self.logo_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            self.logo_label.setPixmap(pix)
+        self.logo_label.raise_()
 
-        ciphers = [
-            ("⚙  Šifrátor 3.0", "Šifrátor 3.0"),
-            ("0110\n0011  Binární čtverce", "Binární čtverce"),
-            ("⠿  Braillovo písmo", "Braillovo písmo"),
-            ("🇬🇧  Britská vlajka", "Britská vlajka"),
-            ("▦  Hebrejský kříž", "Hebrejský kříž"),
-            ("✚  Malý polský kříž", "Malý polský kříž"),
-            ("▯  Mobil", "Mobil"),
-            ("☾  Mobiž", "Mobiž"),
-            ("☽  Moonovo písmo", "Moonovo písmo"),
-            ("⋯−  Morseova abeceda", "Morseova abeceda"),
-            ("▲▲  Morseova abeceda – hory", "Morseova abeceda – hory"),
-            ("♟  Tančící figurky I/II", "Tančící figurky I/II"),
-            ("♟  Tančící figurky II", "Tančící figurky II"),
-            ("△  Zednářská šifra", "Zednářská šifra"),
-            ("A↔Z  Záměna písmen (A=Z)", "Záměna písmen (A=Z)"),
-            ("A=B\nA=Z  Záměna písmen za čísla", "Záměna písmen za čísla"),
-            ("A→B\nA=Z  Záměna písmen za čísla", "Záměna písmen za čísla 2"),
-            ("♯  Zlomky", "Zlomky"),
-            ("▣  Mobilová šifra", "Mobilová šifra"),
-            ("✦  Souřadnice", "Souřadnice"),
-        ]
+        # Levá část
+        self.title_left.setGeometry(self.sr(120, 94, 520, 42))
+        self.search_edit.setGeometry(self.sr(98, 145, 565, 42))
+        self.search_icon.setGeometry(self.sr(606, 145, 48, 42))
+        self.scroll_area.setGeometry(self.sr(86, 210, 615, 610))
 
-        for index, (text, name) in enumerate(ciphers):
-            btn = CipherButton(text, name, self.scroll_content)
-            btn.clicked.connect(lambda checked=False, n=name: self.select_cipher(n))
-            self.grid.addWidget(btn, index // 2, index % 2)
-            self.cipher_buttons.append(btn)
+        # Pravá horní část
+        self.selected_title.setGeometry(self.sr(965, 77, 622, 58))
+        self.selected_icon.setGeometry(self.sr(1518, 76, 70, 70))
 
-        # Pravá část
-        self.input_text = QTextEdit(self)
-        self.input_text.setPlaceholderText("Zadej tajnou zprávu...")
-        self.input_text.setFont(QFont("Segoe UI", 14))
-        self.input_text.setStyleSheet(self.text_edit_style())
+        # Vstupní část – nadpis je ve středovém horním rámečku nad vstupem.
+        # Posunutý trochu níž a více doprava, aby nelezl pod kruhové logo.
+        self.input_label.setGeometry(self.sr(1015, 182, 500, 34))
+        self.input_text.setGeometry(self.sr(728, 265, 822, 126))
 
-        self.encrypt_button = GoldButton("ZAŠIFROVAT", self)
-        self.decrypt_button = GoldButton("DEŠIFROVAT", self)
-        self.encrypt_button.clicked.connect(self.encrypt_action)
-        self.decrypt_button.clicked.connect(self.decrypt_action)
+        self.encrypt_button.setGeometry(self.sr(728, 399, 405, 79))
+        self.decrypt_button.setGeometry(self.sr(1168, 399, 438, 79))
 
-        self.result_title = QLabel("VÝSLEDEK", self)
-        self.result_title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        self.result_title.setStyleSheet(f"color: {Colors.GOLD_TEXT}; background: transparent;")
+        # Výsledek – nadpis je nad textovým polem, ne uvnitř něj.
+        self.result_title.setGeometry(self.sr(770, 540, 420, 34))
+        self.output_text.setGeometry(self.sr(735, 585, 855, 232))
 
-        self.output_text = QTextEdit(self)
-        self.output_text.setPlaceholderText("Zašifrovaný text se objeví zde...")
-        self.output_text.setFont(QFont("Segoe UI", 14))
-        self.output_text.setStyleSheet(self.text_edit_style())
-        # Text nechávám jako placeholder; skutečný výstup se doplní po kliknutí.
+        self.status.setGeometry(self.sr(52, 881, 950, 22))
 
-        self.output_star = QLabel("✦", self)
-        self.output_star.setFont(QFont("Segoe UI Symbol", 46))
-        self.output_star.setStyleSheet("color: rgba(190, 210, 230, 170); background: transparent;")
-        self.output_star.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        # Spodní status
-        self.status = QLabel(self)
-        self.status.setFont(QFont("Segoe UI", 10))
-        self.status.setStyleSheet(f"background-color: {Colors.STATUS}; color: #f0f0f0; padding-left: 4px;")
-        self.status.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-
-        # Logo jako opravdová překryvná vrstva
-        self.logo_overlay = LogoOverlay(self)
-        self.logo_overlay.set_pixmap(self.logo_pixmap)
-
-        self.refresh_cipher_styles()
+        self.apply_responsive_fonts()
+        self.update_text_editor_margins()
+        self.update_selected_header()
         self.update_status()
 
-    def text_edit_style(self):
-        return f"""
-            QTextEdit {{
-                background-color: {Colors.DARK_BOX};
-                color: {Colors.TEXT_LIGHT};
-                border: 1px solid {Colors.BLUE_BORDER};
-                border-radius: 10px;
-                padding: 12px;
-                selection-background-color: {Colors.GOLD};
-                selection-color: #111111;
-            }}
-        """
+    def apply_responsive_fonts(self):
+        self.title_left.setFont(QFont("Georgia", self.fs(22), QFont.Bold))
+        self.search_edit.setFont(QFont("Georgia", self.fs(14)))
+        self.search_icon.setFont(QFont("Georgia", self.fs(27), QFont.Bold))
 
-    def compute_rects(self) -> Rects:
-        w = self.width()
-        h = self.height()
+        for btn in self.cipher_buttons:
+            btn.setFont(QFont("Georgia", self.fs(13)))
+            icon_size = max(24, self.fs(38))
+            btn.setIconSize(QSize(icon_size, icon_size))
+            btn.setMinimumHeight(max(36, self.fs(50)))
+            btn.update_elided_text()
 
-        status_h = 24
-        # V4: hlavní panel je posazený podobně jako v referenci –
-        # není nalepený úplně k levému okraji a horní část má víc vzduchu.
-        board_x = max(28, int(w * 0.020))
-        board_y = 28
-        board_w = w - board_x * 2
-        board_h = h - board_y - status_h - 18
+        self.selected_title.setFont(QFont("Georgia", self.fs(20), QFont.Bold))
+        self.input_label.setFont(QFont("Georgia", self.fs(17), QFont.Bold))
+        self.input_text.setFont(QFont("Georgia", self.fs(14)))
+        self.input_text.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.input_text.setWordWrapMode(QTextOption.WrapAnywhere)
+        self.output_text.setFont(QFont("Georgia", self.fs(14)))
+        self.encrypt_button.setFont(QFont("Georgia", self.fs(19), QFont.Bold))
+        self.decrypt_button.setFont(QFont("Georgia", self.fs(19), QFont.Bold))
+        self.result_title.setFont(QFont("Georgia", self.fs(18), QFont.Bold))
+        self.status.setFont(QFont("Georgia", self.fs(10)))
 
-        board = QRect(board_x, board_y, board_w, board_h)
-        center_x = board.center().x()
+        # Ikony zámků kreslí TransparentActionButton ručně podle výšky tlačítka.
+        # Tady necháváme jen font textu; samotná ikona je zvětšená v paintEvent().
+        self.update_text_editor_margins()
 
-        # Logo podobně jako v referenci. Důležité je, že pod ním nejsou titulkové panely.
-        # Logo v referenci sedí níž a není nalepené na horní rámeček.
-        # Menší velikost pomáhá tomu, aby titulkové pásy nepůsobily useknutě.
-        logo_size = min(212, max(190, int(board_w * 0.154)))
-        logo_rect = QRect(center_x - logo_size // 2, board_y + 7, logo_size, logo_size)
+    def update_text_editor_margins(self):
+        """Využije co největší část rámečku, ale nechá vpravo rezervu na brko."""
+        left = max(8, self.fs(14))
+        top = max(6, self.fs(10))
+        bottom = max(6, self.fs(10))
+        # Rezerva na kalamář s perem vpravo
+        right = max(110, int(170 * self.sx()))
 
-        # Horní dekorativní panely.
-        inner = 18
-        logo_gap = logo_size + 52
-        # Horní dekorativní pásy: v referenci nejsou výrazné vysoké bloky,
-        # ale nízké, jemně zatmavené pruhy zapuštěné do hlavního panelu.
-        header_y = board_y + 28
-        header_h = 62
-        header_w = int((board_w - logo_gap - inner * 2) / 2)
-        header_left = QRect(board_x + inner, header_y, header_w, header_h)
-        header_right = QRect(center_x + logo_gap // 2, header_y, header_w, header_h)
+        self.input_text.setViewportMargins(left, top, right, bottom)
+        self.input_text.document().setDocumentMargin(0)
 
-        # Hlavní pracovní část. Rozměry jsou laděné pro okno 1408×768
-        # a zároveň se přepočítávají podle velikosti okna.
-        left_x = board_x + 45
-        right_margin = 50
-        middle_gap = 28
-        available = board_w - 45 - right_margin - middle_gap
-        left_w = int(available * 0.504)
-        right_w = available - left_w
-        right_x = left_x + left_w + middle_gap
+        out_left = max(8, self.fs(14))
+        out_top = max(6, self.fs(10))
+        out_right = max(8, self.fs(14))
+        out_bottom = max(6, self.fs(10))
+        self.output_text.setViewportMargins(out_left, out_top, out_right, out_bottom)
+        self.output_text.document().setDocumentMargin(0)
 
-        # Titulkové pásy jsou níž – v referenci je mezi horní lištou a titulkem
-        # delší tmavý přechod, ne hned další panel.
-        title_y = board_y + 138
-        title_h = 51
-        left_body_y = title_y + 54
-        left_body_h = board.bottom() - left_body_y - 64
+    # ------------------------------------------------------------
+    # Logika
+    # ------------------------------------------------------------
 
-        # Titulky jsou zkrácené uprostřed kvůli logu.
-        title_cut = min(92, int(logo_size * 0.44))
-        left_title = QRect(left_x, title_y, left_w - title_cut, title_h)
-        right_title = QRect(right_x + title_cut, title_y, right_w - title_cut, title_h)
+    def normalize_search_text(self, text):
+        """Vyhledávání bez rozlišování diakritiky a velikosti písmen."""
+        text = text.strip().lower()
+        text = unicodedata.normalize("NFKD", text)
+        return "".join(ch for ch in text if not unicodedata.combining(ch))
 
-        left_body = QRect(left_x, left_body_y, left_w, left_body_h)
+    def filter_ciphers(self, query):
+        """Vyfiltruje šifry a znovu je naskládá kompaktně od prvního řádku."""
+        normalized_query = self.normalize_search_text(query)
 
-        # right_body je základní obdélník sloupce; jednotlivé pravé prvky se níže
-        # rozmístí podobně jako v referenci. Vstupní pole začíná níž než levý seznam.
-        right_body = QRect(right_x, left_body_y, right_w, left_body_h)
+        # Nejdřív vyčistit layout. Widgety se nemažou, jen se vyndají z pozic.
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self.scroll_content)
 
-        return Rects(
-            board=board,
-            header_left=header_left,
-            header_right=header_right,
-            logo=logo_rect,
-            left_title=left_title,
-            right_title=right_title,
-            left_body=left_body,
-            right_body=right_body,
-        )
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_layout_positions()
+        visible_buttons = []
+        for btn in self.cipher_buttons:
+            normalized_name = self.normalize_search_text(btn.full_text)
+            visible = normalized_query in normalized_name
+            btn.setVisible(visible)
+            if visible:
+                visible_buttons.append(btn)
 
-    def update_layout_positions(self):
-        r = self.compute_rects()
-        self.rects = r
+        # Přidat výsledky znovu od začátku: 2 sloupce, řádek 0, 1, 2...
+        for index, btn in enumerate(visible_buttons):
+            row = index // 2
+            col = index % 2
+            self.grid.addWidget(btn, row, col, alignment=Qt.AlignTop)
 
-        self.header_left.setGeometry(r.header_left)
-        self.header_right.setGeometry(r.header_right)
-        self.sun_icon.setGeometry(20, 0, 80, r.header_left.height())
-        self.anchor_top.setGeometry(r.header_right.width() - 80, 0, 60, r.header_right.height())
+        # Skryté widgety nesmí zabírat místo.
+        for btn in self.cipher_buttons:
+            if btn not in visible_buttons:
+                btn.hide()
 
-        self.left_title_frame.setGeometry(r.left_title)
-        self.right_title_frame.setGeometry(r.right_title)
-        self.left_title.setGeometry(18, 0, r.left_title.width() - 36, r.left_title.height())
-        self.right_title.setGeometry(18, 0, r.right_title.width() - 80, r.right_title.height())
-        self.right_title_anchor.setGeometry(r.right_title.width() - 58, 0, 40, r.right_title.height())
-
-        self.left_body.setGeometry(r.left_body)
-        self.scroll_area.setGeometry(8, 8, r.left_body.width() - 16, r.left_body.height() - 16)
-
-        # Pravé prvky – vstupní pole začíná níž než titulek, stejně jako v referenci.
-        rb = r.right_body
-        input_y = r.board.y() + 252
-        self.input_text.setGeometry(rb.x(), input_y, rb.width(), 100)
-
-        btn_y = input_y + 122
-        btn_gap = 26
-        btn_w = (rb.width() - btn_gap) // 2
-        self.encrypt_button.setGeometry(rb.x(), btn_y, btn_w, 62)
-        self.decrypt_button.setGeometry(rb.x() + btn_w + btn_gap, btn_y, btn_w, 62)
-
-        result_y = btn_y + 84
-        self.result_title.setGeometry(rb.x(), result_y, rb.width(), 30)
-        out_y = result_y + 38
-        self.output_text.setGeometry(rb.x(), out_y, rb.width(), max(120, r.board.bottom() - out_y - 40))
-        self.output_star.setGeometry(rb.right() - 76, self.output_text.geometry().bottom() - 76, 54, 54)
-        self.output_star.raise_()
-
-        self.status.setGeometry(0, self.height() - 24, self.width(), 24)
-
-        self.logo_overlay.setGeometry(r.logo)
-        self.logo_overlay.raise_()
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-        # Pozadí pergamenu
-        if not self.bg_pixmap.isNull():
-            scaled = self.bg_pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            x = (self.width() - scaled.width()) // 2
-            y = (self.height() - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
-        else:
-            painter.fillRect(self.rect(), QColor("#1d1712"))
-
-        if not self.rects:
-            return
-
-        board = QRectF(self.rects.board)
-
-        # Stín
-        painter.setBrush(QColor(0, 0, 0, 85))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(board.adjusted(6, 7, 6, 7), 24, 24)
-
-        # Hlavní modrý panel
-        grad = QLinearGradient(board.left(), board.top(), board.right(), board.bottom())
-        grad.setColorAt(0, QColor("#103452"))
-        grad.setColorAt(0.45, QColor(Colors.BLUE_MAIN))
-        grad.setColorAt(1, QColor("#092036"))
-        painter.setBrush(QBrush(grad))
-        painter.setPen(QPen(QColor(Colors.GOLD), 3))
-        painter.drawRoundedRect(board, 24, 24)
-
-        # Jemné vnitřní linky jako v referenci
-        painter.setPen(QPen(QColor(255, 255, 255, 24), 1))
-        painter.drawRoundedRect(board.adjusted(12, 12, -12, -12), 18, 18)
-        painter.setPen(QPen(QColor(52, 97, 127, 165), 1))
-        painter.drawLine(board.left() + 20, board.top() + 92, board.right() - 20, board.top() + 92)
-
-        # Horní panely a titulkové pásy se kreslí jako grafika, ne jako obdélníkové widgety.
-        self.draw_panel_round_rect(painter, self.rects.header_left, 15, False)
-        self.draw_panel_round_rect(painter, self.rects.header_right, 15, False)
-        self.draw_title_tab(painter, self.rects.left_title, "left")
-        self.draw_title_tab(painter, self.rects.right_title, "right")
-
-        # Dekorační body a kotvy
-        deco = QColor(Colors.GOLD_TEXT)
-        deco.setAlpha(210)
-        painter.setPen(QPen(deco, 2))
-        painter.setFont(QFont("Segoe UI Symbol", 16))
-        painter.drawText(int(board.left() + 13), int(board.top() + 25), "•")
-        painter.drawText(int(board.right() - 28), int(board.top() + 28), "×")
-        painter.drawText(int(board.left() + 12), int(board.bottom() - 12), "⊙")
-        # Dekorace kreslené ručně, aby nevznikaly barevné systémové emoji.
-        if self.rects:
-            self.draw_compass(painter, self.rects.header_left.left() + 42, self.rects.header_left.center().y(), 30, alpha=120)
-            self.draw_anchor(painter, self.rects.header_right.right() - 43, self.rects.header_right.center().y(), 30, alpha=170)
-            self.draw_anchor(painter, self.rects.right_title.right() - 34, self.rects.right_title.center().y(), 20, alpha=175)
-            self.draw_anchor(painter, int(board.right() - 28), int(board.bottom() - 18), 18, alpha=205)
-
-
-    def draw_panel_round_rect(self, painter, rect: QRect, radius=14, border=False):
-        """Jemný horní pás.
-
-        V referenci horní oblast nepůsobí jako samostatné výrazné tlačítko,
-        ale jako velmi jemně zapuštěný pruh v hlavním modrém panelu.
-        Proto používáme průhledné barvy a jen slabý vnitřní lesk.
-        """
-        rr = QRectF(rect)
-        path = QPainterPath()
-        path.addRoundedRect(rr, radius, radius)
-
-        grad = QLinearGradient(rr.left(), rr.top(), rr.right(), rr.bottom())
-        c1 = QColor("#164564"); c1.setAlpha(88)
-        c2 = QColor("#10334f"); c2.setAlpha(58)
-        c3 = QColor("#092338"); c3.setAlpha(42)
-        grad.setColorAt(0.00, c1)
-        grad.setColorAt(0.55, c2)
-        grad.setColorAt(1.00, c3)
-        painter.fillPath(path, QBrush(grad))
-
-        # horní jemný odlesk
-        painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
-        painter.drawLine(int(rr.left() + radius), int(rr.top() + 1), int(rr.right() - radius), int(rr.top() + 1))
-
-        # spodní linka je lehce viditelná, podobně jako v předloze
-        painter.setPen(QPen(QColor(52, 97, 127, 55), 1))
-        painter.drawLine(int(rr.left() + 8), int(rr.bottom()), int(rr.right() - 8), int(rr.bottom()))
-
-        if border:
-            pen_color = QColor(Colors.BLUE_BORDER)
-            pen_color.setAlpha(70)
-            painter.setPen(QPen(pen_color, 1))
-            painter.drawPath(path)
-
-    def draw_title_tab(self, painter, rect: QRect, side: str):
-        """Kreslí titulkový panel s jemným zkosením u loga."""
-        rr = QRectF(rect)
-        r = 14
-        notch = min(26, max(16, int(rect.width() * 0.05)))
-        path = QPainterPath()
-
-        if side == "left":
-            path.moveTo(rr.left() + r, rr.top())
-            path.lineTo(rr.right() - notch, rr.top())
-            path.quadTo(rr.right(), rr.top(), rr.right(), rr.top() + r)
-            path.lineTo(rr.right(), rr.bottom() - r)
-            path.quadTo(rr.right(), rr.bottom(), rr.right() - r, rr.bottom())
-            path.lineTo(rr.left() + r, rr.bottom())
-            path.quadTo(rr.left(), rr.bottom(), rr.left(), rr.bottom() - r)
-            path.lineTo(rr.left(), rr.top() + r)
-            path.quadTo(rr.left(), rr.top(), rr.left() + r, rr.top())
-        else:
-            path.moveTo(rr.left() + r, rr.top())
-            path.lineTo(rr.right() - r, rr.top())
-            path.quadTo(rr.right(), rr.top(), rr.right(), rr.top() + r)
-            path.lineTo(rr.right(), rr.bottom() - r)
-            path.quadTo(rr.right(), rr.bottom(), rr.right() - r, rr.bottom())
-            path.lineTo(rr.left() + notch, rr.bottom())
-            path.quadTo(rr.left(), rr.bottom(), rr.left(), rr.bottom() - r)
-            path.lineTo(rr.left(), rr.top() + r)
-            path.quadTo(rr.left(), rr.top(), rr.left() + r, rr.top())
-
-        grad = QLinearGradient(rr.left(), rr.top(), rr.right(), rr.bottom())
-        grad.setColorAt(0, QColor("#164261"))
-        grad.setColorAt(1, QColor("#123754"))
-        painter.fillPath(path, QBrush(grad))
-        painter.setPen(QPen(QColor(Colors.BLUE_BORDER), 1))
-        painter.drawPath(path)
-
-        # jemný vnitřní lesk
-        inner = rr.adjusted(18, 7, -18, -7)
-        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
-        painter.drawLine(int(inner.left()), int(inner.top()), int(inner.right()), int(inner.top()))
-
-    def draw_compass(self, painter, center_x, center_y, size, alpha=155):
-        painter.save()
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        icon_color = QColor(Colors.GOLD_TEXT)
-        icon_color.setAlpha(alpha)
-        pen = QPen(icon_color, 2)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        r = size / 2
-        painter.drawEllipse(QRectF(center_x - r, center_y - r, size, size))
-        painter.drawEllipse(QRectF(center_x - r * 0.35, center_y - r * 0.35, r * 0.7, r * 0.7))
-        for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0), (0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (-0.7, -0.7)]:
-            painter.drawLine(int(center_x), int(center_y), int(center_x + dx * r * 1.28), int(center_y + dy * r * 1.28))
-        painter.setFont(QFont("Segoe UI", max(7, int(size * 0.18)), QFont.Bold))
-        painter.drawText(QRectF(center_x - 9, center_y - r - 18, 18, 14), Qt.AlignCenter, "N")
-        painter.drawText(QRectF(center_x + r + 2, center_y - 7, 18, 14), Qt.AlignCenter, "E")
-        painter.drawText(QRectF(center_x - 9, center_y + r + 2, 18, 14), Qt.AlignCenter, "S")
-        painter.drawText(QRectF(center_x - r - 20, center_y - 7, 18, 14), Qt.AlignCenter, "W")
-        painter.restore()
-
-    def draw_anchor(self, painter, center_x, center_y, size, alpha=205):
-        painter.save()
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        icon_color = QColor(Colors.GOLD_TEXT)
-        icon_color.setAlpha(alpha)
-        pen = QPen(icon_color, max(2, int(size * 0.08)))
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        s = size
-        # kruh nahoře
-        painter.drawEllipse(QRectF(center_x - s * 0.10, center_y - s * 0.48, s * 0.20, s * 0.20))
-        # dřík
-        painter.drawLine(int(center_x), int(center_y - s * 0.28), int(center_x), int(center_y + s * 0.25))
-        # příčka
-        painter.drawLine(int(center_x - s * 0.22), int(center_y - s * 0.05), int(center_x + s * 0.22), int(center_y - s * 0.05))
-        # spodní oblouk a háky
-        path = QPainterPath()
-        path.moveTo(center_x - s * 0.42, center_y + s * 0.08)
-        path.cubicTo(center_x - s * 0.32, center_y + s * 0.45, center_x + s * 0.32, center_y + s * 0.45, center_x + s * 0.42, center_y + s * 0.08)
-        painter.drawPath(path)
-        painter.drawLine(int(center_x - s * 0.42), int(center_y + s * 0.08), int(center_x - s * 0.55), int(center_y + s * 0.18))
-        painter.drawLine(int(center_x - s * 0.42), int(center_y + s * 0.08), int(center_x - s * 0.33), int(center_y + s * 0.26))
-        painter.drawLine(int(center_x + s * 0.42), int(center_y + s * 0.08), int(center_x + s * 0.55), int(center_y + s * 0.18))
-        painter.drawLine(int(center_x + s * 0.42), int(center_y + s * 0.08), int(center_x + s * 0.33), int(center_y + s * 0.26))
-        painter.restore()
+        self.grid.invalidate()
+        self.scroll_content.adjustSize()
+        self.scroll_area.verticalScrollBar().setValue(0)
 
     def select_cipher(self, name):
         self.selected_cipher = name
         self.refresh_cipher_styles()
+        self.update_selected_header()
         self.update_status()
 
     def refresh_cipher_styles(self):
         for btn in self.cipher_buttons:
-            btn.set_selected(btn.cipher_name == self.selected_cipher)
+            btn.set_selected(btn.item.name == self.selected_cipher)
+
+    def update_selected_header(self):
+        text = f"ŠIFRA – {self.selected_cipher.upper()}"
+
+        # Rezerva pro ikonku vpravo.
+        available = max(80, self.selected_title.width() - int(90 * self.sx()))
+        shown = self.selected_title.fontMetrics().elidedText(text, Qt.ElideRight, available)
+        self.selected_title.setText(shown)
+        self.selected_title.setToolTip(text)
+
+        icon_file = self.selected_icon_file()
+        pix = self.load_pixmap(icon_file)
+        if not pix.isNull():
+            size = max(42, self.fs(64))
+            scaled = pix.scaled(QSize(size, size), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.selected_icon.setPixmap(scaled)
+        else:
+            self.selected_icon.clear()
 
     def update_status(self):
         self.status.setText(
-            f"VYBRÁNÁ ŠIFRA: {self.selected_cipher} | Logování: Vypnuto | SRC složka nalezena."
+            f"VYBRANÁ ŠIFRA:  {self.selected_cipher}   |   LOGOVÁNÍ:  Vypnuto   |   SRC SLOŽKA:  Nalezena"
         )
+
+    def update_result_title(self, mode=None):
+        if mode is not None:
+            self.result_mode = mode
+
+        if self.result_mode == "encrypt":
+            self.result_title.setText("VÝSLEDEK ŠIFROVÁNÍ")
+        elif self.result_mode == "decrypt":
+            self.result_title.setText("VÝSLEDEK DEŠIFROVÁNÍ")
+        else:
+            self.result_title.setText("VÝSLEDEK")
 
     def get_input_text(self):
         return self.input_text.toPlainText().strip()
 
     def encrypt_action(self):
+        self.update_result_title("encrypt")
+
         text = self.get_input_text()
         if not text:
             self.output_text.setPlainText("Nejdřív zadej text k zašifrování.")
             return
 
-        # Zde napojíš vlastní logiku šifrování.
         self.output_text.setPlainText(
-            f"Vybraná šifra: {self.selected_cipher}\n\nZašifrovaný text:\n{text}"
+            f"Zašifrovaný text:\n{text}"
         )
 
     def decrypt_action(self):
+        self.update_result_title("decrypt")
+
         text = self.get_input_text()
         if not text:
             self.output_text.setPlainText("Nejdřív zadej text k dešifrování.")
             return
 
-        # Zde napojíš vlastní logiku dešifrování.
         self.output_text.setPlainText(
-            f"Vybraná šifra: {self.selected_cipher}\n\nDešifrovaný text:\n{text}"
+            f"Dešifrovaný text:\n{text}"
         )
+
+    # ------------------------------------------------------------
+    # Události
+    # ------------------------------------------------------------
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_layout_positions()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        if not self.skin_pixmap.isNull():
+            scaled = self.skin_pixmap.scaled(
+                self.size(),
+                Qt.IgnoreAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            painter.drawPixmap(0, 0, scaled)
+        else:
+            painter.fillRect(self.rect(), QColor("#06131b"))
+
+
+def set_windows_app_id():
+    """Nastaví vlastní AppUserModelID, aby Windows nepoužil ikonu python.exe."""
+    if sys.platform.startswith("win"):
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Komarek.SifratorMraveniste.PiratiZKaribiku"
+            )
+        except Exception:
+            pass
+
+
+def make_app_icon_from_logo(icons_path):
+    """Vytvoří app_icon.ico z icons/logo.png, pokud existuje Pillow.
+
+    Windows lišta a titulkový pruh mají nejradši .ico s více velikostmi.
+    PNG někdy funguje jen v okně, ale na liště se může dál držet Python ikona.
+    """
+    logo_png = os.path.join(icons_path, "logo.png")
+    ico_path = os.path.join(icons_path, "app_icon.ico")
+
+    if os.path.exists(ico_path):
+        return ico_path
+
+    if not os.path.exists(logo_png):
+        return ""
+
+    if Image is None:
+        return logo_png
+
+    try:
+        img = Image.open(logo_png).convert("RGBA")
+
+        # Oříznutí průhledných okrajů, aby logo v ikoně nebylo zbytečně malé.
+        bbox = img.getchannel("A").getbbox()
+        if bbox:
+            img = img.crop(bbox)
+
+        # Čtvercové plátno, aby se ikona nedeformovala.
+        size = max(img.size)
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
+
+        canvas.save(
+            ico_path,
+            format="ICO",
+            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        )
+        return ico_path
+    except Exception:
+        return logo_png
 
 
 class SifratorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ŠIFRÁTOR MRAVENIŠTĚ - PIRÁTI Z KARIBIKU")
-        self.resize(1408, 768)
-        self.setMinimumSize(1200, 700)
+        self.resize(BASE_W, BASE_H)
+        self.setMinimumSize(1200, 675)
 
-        central = PirateCentralWidget()
-        self.setCentralWidget(central)
+        self.central = SifratorSkinWidget()
+        self.setCentralWidget(self.central)
+
+        # Ikona celé aplikace.
+        # Primárně použije icons/app_icon.ico vygenerované z icons/logo.png.
+        app_icon_path = make_app_icon_from_logo(self.central.icons_path)
+        if app_icon_path and os.path.exists(app_icon_path):
+            app_icon = QIcon(app_icon_path)
+            self.setWindowIcon(app_icon)
+
+            app = QApplication.instance()
+            if app is not None:
+                app.setWindowIcon(app_icon)
 
 
 if __name__ == "__main__":
+    # Musí být před QApplication, jinak si Windows může nechat ikonu python.exe.
+    set_windows_app_id()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Šifrátor Mraveniště")
+    app.setApplicationDisplayName("Šifrátor Mraveniště")
 
     window = SifratorWindow()
     window.show()
