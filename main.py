@@ -1,11 +1,12 @@
 APP_VERSION = "0.0.1"
+APP_NAME = "Sifrator_Mraveniste"
+
 import os
 import sys
-import ctypes
 import unicodedata
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, QRect, QSize
+from PySide6.QtCore import Qt, QRect, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTextOption, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,12 +19,15 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QWidget,
     QGridLayout,
+    QMessageBox,
 )
 
 try:
     from PIL import Image
 except Exception:
     Image = None
+
+import update_manager
 
 
 # ============================================================
@@ -736,87 +740,67 @@ class SifratorSkinWidget(QWidget):
             painter.fillRect(self.rect(), QColor("#06131b"))
 
 
-def set_windows_app_id():
-    """Nastaví vlastní AppUserModelID, aby Windows nepoužil ikonu python.exe."""
-    if sys.platform.startswith("win"):
-        try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Komarek.SifratorMraveniste.PiratiZKaribiku"
-            )
-        except Exception:
-            pass
-
-
-def make_app_icon_from_logo(icons_path):
-    """Vytvoří app_icon.ico z icons/logo.png, pokud existuje Pillow.
-
-    Windows lišta a titulkový pruh mají nejradši .ico s více velikostmi.
-    PNG někdy funguje jen v okně, ale na liště se může dál držet Python ikona.
-    """
-    logo_png = os.path.join(icons_path, "logo.png")
-    ico_path = os.path.join(icons_path, "app_icon.ico")
-
-    if os.path.exists(ico_path):
-        return ico_path
-
-    if not os.path.exists(logo_png):
-        return ""
-
-    if Image is None:
-        return logo_png
-
-    try:
-        img = Image.open(logo_png).convert("RGBA")
-
-        # Oříznutí průhledných okrajů, aby logo v ikoně nebylo zbytečně malé.
-        bbox = img.getchannel("A").getbbox()
-        if bbox:
-            img = img.crop(bbox)
-
-        # Čtvercové plátno, aby se ikona nedeformovala.
-        size = max(img.size)
-        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        canvas.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
-
-        canvas.save(
-            ico_path,
-            format="ICO",
-            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
-        )
-        return ico_path
-    except Exception:
-        return logo_png
-
-
 class SifratorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ŠIFRÁTOR MRAVENIŠTĚ - PIRÁTI Z KARIBIKU")
+        self.setWindowTitle(f"ŠIFRÁTOR MRAVENIŠTĚ - PIRÁTI Z KARIBIKU v{APP_VERSION}")
         self.resize(BASE_W, BASE_H)
         self.setMinimumSize(1200, 675)
 
         self.central = SifratorSkinWidget()
         self.setCentralWidget(self.central)
 
-        # Ikona celé aplikace.
-        # Primárně použije icons/app_icon.ico vygenerované z icons/logo.png.
+        # Ikona celé aplikace z icons/logo.png / icons/app_icon.ico.
         app_icon_path = make_app_icon_from_logo(self.central.icons_path)
         if app_icon_path and os.path.exists(app_icon_path):
             app_icon = QIcon(app_icon_path)
             self.setWindowIcon(app_icon)
-
             app = QApplication.instance()
             if app is not None:
                 app.setWindowIcon(app_icon)
 
+        # Kontrola aktualizací až po zobrazení okna.
+        # Když není internet nebo není novější verze, nic nevyskočí.
+        QTimer.singleShot(1500, self.check_updates_after_start)
+
+    def check_updates_after_start(self):
+        update_data = update_manager.check_for_update(APP_VERSION)
+
+        if not update_data:
+            return
+
+        remote_version = update_data.get("version", "")
+        notes = update_data.get("notes", "")
+
+        message = (
+            f"Je dostupná nová verze {remote_version}.\n\n"
+            f"Aktuální verze: {APP_VERSION}\n\n"
+            f"{notes}\n\n"
+            "Chceš aplikaci aktualizovat?"
+        )
+
+        answer = QMessageBox.question(
+            self,
+            "Dostupná aktualizace",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+
+        if answer == QMessageBox.Yes:
+            try:
+                update_manager.download_and_install_update(update_data)
+            except Exception as error:
+                QMessageBox.critical(
+                    self,
+                    "Chyba aktualizace",
+                    f"Aktualizaci se nepodařilo dokončit:\n\n{error}",
+                )
+
 
 if __name__ == "__main__":
-    # Musí být před QApplication, jinak si Windows může nechat ikonu python.exe.
-    set_windows_app_id()
-
     app = QApplication(sys.argv)
     app.setApplicationName("Šifrátor Mraveniště")
-    app.setApplicationDisplayName("Šifrátor Mraveniště")
 
     window = SifratorWindow()
     window.show()

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+
+.venv/
+deactivate/
+
+build/
+dist/
+release_*/
+*.zip
+*.spec
+*.pkg
+obf/
