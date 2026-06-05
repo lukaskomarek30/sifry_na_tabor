@@ -3,6 +3,7 @@ APP_NAME = "Sifrator_Mraveniste"
 
 import os
 import sys
+import ctypes
 import unicodedata
 from dataclasses import dataclass
 
@@ -56,6 +57,62 @@ import update_manager
 
 BASE_W = 1672
 BASE_H = 941
+
+
+
+def get_app_dir():
+    """Vrátí složku aplikace.
+
+    Při spuštění z Pythonu:
+        složka, kde leží main.py
+
+    Při spuštění z EXE:
+        složka, kde leží Sifrator_Mraveniste.exe
+
+    Díky tomu hotová aplikace hledá složku icons vedle EXE.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_script_dir():
+    """Vrátí složku skriptu main.py."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_pyinstaller_bundle_dir():
+    """Vrátí dočasnou složku PyInstalleru, pokud aplikace běží jako EXE."""
+    return getattr(sys, "_MEIPASS", "")
+
+
+def get_icons_dir():
+    """Najde složku icons.
+
+    Hledá:
+    1) vedle EXE / main.py
+    2) vedle skriptu
+    3) uvnitř PyInstaller balíčku, pokud by se icons někdy přibalily přes --add-data
+
+    Pro automatické aktualizace je nejlepší varianta:
+        Sifrator_Mraveniste.exe
+        icons/
+    """
+    candidates = [
+        os.path.join(get_app_dir(), "icons"),
+        os.path.join(get_script_dir(), "icons"),
+    ]
+
+    bundle_dir = get_pyinstaller_bundle_dir()
+    if bundle_dir:
+        candidates.append(os.path.join(bundle_dir, "icons"))
+
+    for path in candidates:
+        if path and os.path.isdir(path):
+            return path
+
+    return os.path.join(get_app_dir(), "icons")
 
 
 class Colors:
@@ -230,8 +287,10 @@ class SifratorSkinWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.assets_path = os.path.dirname(os.path.abspath(__file__))
-        self.icons_path = os.path.join(self.assets_path, "icons")
+        # DŮLEŽITÉ PRO EXE A AKTUALIZACE:
+        # assets_path je složka aplikace a icons_path je složka icons vedle EXE.
+        self.assets_path = get_app_dir()
+        self.icons_path = get_icons_dir()
 
         # Čisté BG je přímo ve složce icons/BG.png.
         self.skin_path = self.find_asset(["BG.png", "bg.png"])
@@ -275,18 +334,53 @@ class SifratorSkinWidget(QWidget):
         return max(8, int(size * self.sc()))
 
     def find_asset(self, names):
-        for folder in (self.icons_path, self.assets_path):
+        search_folders = [
+            self.icons_path,
+            self.assets_path,
+            get_script_dir(),
+        ]
+
+        bundle_dir = get_pyinstaller_bundle_dir()
+        if bundle_dir:
+            search_folders.append(bundle_dir)
+            search_folders.append(os.path.join(bundle_dir, "icons"))
+
+        used = set()
+        for folder in search_folders:
+            if not folder or folder in used:
+                continue
+
+            used.add(folder)
+
             for name in names:
                 path = os.path.join(folder, name)
                 if os.path.exists(path):
                     return path
+
         return None
 
     def icon_path(self, file_name):
+        return self.find_icon_path(file_name)
+
+    def find_icon_path(self, file_name):
+        candidates = [
+            os.path.join(self.icons_path, file_name),
+            os.path.join(get_app_dir(), "icons", file_name),
+            os.path.join(get_script_dir(), "icons", file_name),
+        ]
+
+        bundle_dir = get_pyinstaller_bundle_dir()
+        if bundle_dir:
+            candidates.append(os.path.join(bundle_dir, "icons", file_name))
+
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+
         return os.path.join(self.icons_path, file_name)
 
     def load_pixmap(self, file_name):
-        path = self.icon_path(file_name)
+        path = self.find_icon_path(file_name)
         if os.path.exists(path):
             return QPixmap(path)
         return QPixmap()
@@ -317,7 +411,7 @@ class SifratorSkinWidget(QWidget):
 
         missing = []
         for file_name in required:
-            if not os.path.exists(self.icon_path(file_name)):
+            if not os.path.exists(self.find_icon_path(file_name)):
                 missing.append(file_name)
 
         if missing:
@@ -740,6 +834,70 @@ class SifratorSkinWidget(QWidget):
             painter.fillRect(self.rect(), QColor("#06131b"))
 
 
+
+def set_windows_app_id():
+    """Nastaví vlastní AppUserModelID, aby Windows nepoužil ikonu python.exe."""
+    if sys.platform.startswith("win"):
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Komarek.SifratorMraveniste.PiratiZKaribiku"
+            )
+        except Exception:
+            pass
+
+
+def make_app_icon_from_logo(icons_path):
+    """Vytvoří icons/app_icon.ico z icons/logo.png a vrátí cestu k ikoně.
+
+    Windows pro ikonu okna / hlavního panelu nejlépe pracuje s .ico souborem.
+    Pokud app_icon.ico už existuje, použije se rovnou.
+    """
+    logo_png = os.path.join(icons_path, "logo.png")
+    logo_png_alt = os.path.join(icons_path, "Logo.png")
+    ico_path = os.path.join(icons_path, "app_icon.ico")
+
+    if os.path.exists(ico_path):
+        return ico_path
+
+    if not os.path.exists(logo_png) and os.path.exists(logo_png_alt):
+        logo_png = logo_png_alt
+
+    if not os.path.exists(logo_png):
+        return ""
+
+    if Image is None:
+        return logo_png
+
+    try:
+        img = Image.open(logo_png).convert("RGBA")
+
+        bbox = img.getchannel("A").getbbox()
+        if bbox:
+            img = img.crop(bbox)
+
+        size = max(img.size)
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
+
+        canvas.save(
+            ico_path,
+            format="ICO",
+            sizes=[
+                (16, 16),
+                (24, 24),
+                (32, 32),
+                (48, 48),
+                (64, 64),
+                (128, 128),
+                (256, 256),
+            ],
+        )
+        return ico_path
+
+    except Exception:
+        return logo_png
+
+
 class SifratorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -799,8 +957,12 @@ class SifratorWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Musí být před QApplication, jinak si Windows může držet ikonu python.exe.
+    set_windows_app_id()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Šifrátor Mraveniště")
+    app.setApplicationDisplayName("Šifrátor Mraveniště")
 
     window = SifratorWindow()
     window.show()
