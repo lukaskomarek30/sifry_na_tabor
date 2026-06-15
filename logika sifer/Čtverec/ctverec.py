@@ -1,24 +1,17 @@
-# ============================================================
-# Čtverec - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Čtverec\ctverec.py
-#
-# Klíč:
-#
-# A B C D E
-# F G H I J
-# K L M N O
-# P Q R S T
-# U V X Y Z
-#
-# W se zapisuje jako V.
-# Symboly jako ?, . , - ! : ; / zůstávají jako symboly.
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - CtverecOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Čtverec pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -100,6 +93,8 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class CtverecOutputWidget(QWidget):
     """Kreslený výstup šifry Čtverec.
 
@@ -114,6 +109,7 @@ class CtverecOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -122,26 +118,31 @@ class CtverecOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_cell_metrics(self):
+        """Vrátí rozměrové parametry buňky odvozené od aktuálního měřítka."""
         cell_w = max(32, int(46 * self.scale_value))
         cell_h = max(32, int(46 * self.scale_value))
         letter_gap = max(7, int(10 * self.scale_value))
@@ -150,6 +151,7 @@ class CtverecOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, _, _ = self.get_cell_metrics()
 
         if char in SQUARE_POSITIONS:
@@ -158,6 +160,7 @@ class CtverecOutputWidget(QWidget):
         return max(18, int(24 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 12
         margin_right = 12
         margin_top = 8
@@ -193,6 +196,7 @@ class CtverecOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -207,6 +211,7 @@ class CtverecOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -248,6 +253,7 @@ class CtverecOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(14, int(24 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
@@ -274,6 +280,7 @@ class CtverecOutputWidget(QWidget):
         return QPointF(x_positions[col], y_positions[row])
 
     def draw_cipher_symbol(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         col, row = SQUARE_POSITIONS[letter]
 
         shadow = QColor(0, 0, 0, 165)

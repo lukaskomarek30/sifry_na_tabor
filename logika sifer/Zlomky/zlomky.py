@@ -1,30 +1,17 @@
-# ============================================================
-# Zlomky - logika šifrování, dešifrování + kreslený výstup
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Zlomky\zlomky.py
-#
-# Klíč podle obrázku:
-# A B C D E  -> jmenovatel 1
-# F G H I J  -> jmenovatel 2
-# K L M N O  -> jmenovatel 3
-# P Q R S T  -> jmenovatel 4
-# U V X Y Z  -> jmenovatel 5
-#
-# Čitatel = pořadí písmene ve skupině 1-5
-# Jmenovatel = číslo skupiny 1-5
-#
-# A = 1/1, H = 3/2, O = 5/3, J = 5/2
-#
-# DŮLEŽITÉ:
-# encrypt() vrací interní zápis 1/1 3/2 ...
-# ZlomkyOutputWidget tento zápis kreslí jako klasické zlomky:
-#
-#   1
-#  ---
-#   1
-#
-# Symboly jako ?,.-! zůstávají beze změny.
-# ============================================================
+"""Implementace šifry Zlomky pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 from __future__ import annotations
 
@@ -59,6 +46,7 @@ LETTER_TO_CODE["W"] = LETTER_TO_CODE["V"]
 
 
 def remove_diacritics(text: str) -> str:
+    """Odstraní diakritiku ze vstupu pomocí Unicode normalizace."""
     normalized = unicodedata.normalize("NFKD", str(text or ""))
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return normalized.upper()
@@ -193,6 +181,8 @@ def parse_cipher_tokens(cipher_text: str) -> list[str]:
     return tokens
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class ZlomkyOutputWidget(QWidget):
     """Kreslený výstup šifry Zlomky.
 
@@ -201,6 +191,7 @@ class ZlomkyOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.tokens: list[str] = []
@@ -210,11 +201,13 @@ class ZlomkyOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = str(text or "")
         self.tokens = parse_cipher_tokens(self.cipher_text)
         self.update_content_size()
@@ -222,17 +215,20 @@ class ZlomkyOutputWidget(QWidget):
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.tokens = []
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
         # Větší výška, aby bylo jasně vidět čitatel / čára / jmenovatel.
+        """Pomocná funkce používaná interní logikou šifry."""
         frac_w = max(34, int(46 * self.scale_value))
         frac_h = max(58, int(78 * self.scale_value))
         letter_gap = max(7, int(10 * self.scale_value))
@@ -241,6 +237,7 @@ class ZlomkyOutputWidget(QWidget):
         return frac_w, frac_h, letter_gap, word_gap, line_gap
 
     def token_width(self, token: str) -> int:
+        """Pomocná funkce používaná interní logikou šifry."""
         frac_w, _, _, word_gap, _ = self.get_metrics()
 
         if token == " ":
@@ -253,6 +250,7 @@ class ZlomkyOutputWidget(QWidget):
         return max(22, int(32 * self.scale_value))
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 8
         margin_right = 8
         margin_top = 4
@@ -286,6 +284,7 @@ class ZlomkyOutputWidget(QWidget):
         return max(170, y + frac_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -300,6 +299,7 @@ class ZlomkyOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -344,6 +344,7 @@ class ZlomkyOutputWidget(QWidget):
                 x += token_w + letter_gap
 
     def draw_fraction(self, painter: QPainter, rect: QRectF, token: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         numerator, denominator = token.split("/", 1)
         color = QColor("#f3d79a")
 
@@ -376,6 +377,7 @@ class ZlomkyOutputWidget(QWidget):
         painter.drawText(den_rect, Qt.AlignCenter, denominator)
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(20, int(34 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
@@ -385,6 +387,7 @@ class ZlomkyOutputWidget(QWidget):
 # Nechávám i HTML pomocnou funkci kvůli zpětné kompatibilitě,
 # ale hlavní aplikace má používat ZlomkyOutputWidget.
 def _html_fraction(numerator: str, denominator: str, color: str, font_size: int) -> str:
+    """Vytvoří HTML zápis jednoho zlomku pro vizuální zobrazení."""
     n = html.escape(str(numerator))
     d = html.escape(str(denominator))
     line_color = html.escape(color)
@@ -399,6 +402,7 @@ def _html_fraction(numerator: str, denominator: str, color: str, font_size: int)
 
 
 def to_html(cipher_text: str, color: str = "#f3d79a", font_family: str = "Georgia", font_size: int = 28) -> str:
+    """Převede výstup šifry do HTML reprezentace vhodné pro zobrazení v UI."""
     source = str(cipher_text or "")
     font_family_safe = html.escape(font_family)
     color_safe = html.escape(color)

@@ -1,19 +1,21 @@
-# ============================================================
-# Záměna písmen (A=Z) / Atbash
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Záměna písmen (A=Z)\zamena_pismen_a_z.py
-#
-# Princip podle klíče:
-# A=Z, B=Y, C=X, D=W, E=V, F=U, G=T, H=S, I=R,
-# J=Q, K=P, L=O, M=N a opačně.
-#
-# Symboly jako ?, . , - ! zůstávají beze změny.
-# Česká diakritika se převede na písmena bez háčků a čárek.
-# Velikost písmen se zachová.
-# ============================================================
+"""Implementace šifry Záměna písmen (A=Z) pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
+# Základní abeceda používaná danou šifrou.
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 REVERSED = "ZYXWVUTSRQPONMLKJIHGFEDCBA"
 
@@ -44,11 +46,13 @@ def transform(text: str) -> str:
 
 
 def encrypt(text: str) -> str:
+    """Zašifruje vstupní text podle pravidel konkrétní šifry."""
     return transform(text)
 
 
 def decrypt(text: str) -> str:
     # A=Z je obousměrná záměna, takže dešifrování je stejné jako šifrování.
+    """Dešifruje vstupní text zpět do běžné textové podoby."""
     return transform(text)
 
 

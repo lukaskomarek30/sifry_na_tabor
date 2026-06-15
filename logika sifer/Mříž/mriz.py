@@ -1,27 +1,17 @@
-# ============================================================
-# Mříž - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Mříž\mriz.py
-#
-# KLÍČ:
-#
-#   A B C | D E | F G | H I
-#   J K   | L M | N O | P Q
-#   R S   | T U | V W | X Y Z
-#
-# OPRAVENÉ PRAVIDLO KRESLENÍ:
-# - kreslí se přesně ta část mříže, ve které písmeno v klíči leží
-# - horní řada má spodní vodorovnou linku
-# - prostřední řada má horní i spodní vodorovnou linku
-# - spodní řada má horní vodorovnou linku
-# - první sloupcová oblast má pravou svislou linku
-# - oblast DE/LM/TU má pravou dvojitou svislou linku
-# - oblast FG/NO/VW má levou dvojitou svislou linku
-# - ostatní svislé linky jsou jednoduché
-# - tečka určuje přesnou pozici písmena v oblasti
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-# ============================================================
+"""Implementace šifry Mříž pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -49,12 +39,14 @@ for row_index, row in enumerate(GRID_ROWS):
 
 
 def normalize_text(text: str) -> str:
+    """Normalizuje vstupní text do tvaru používaného interní logikou šifry."""
     normalized = unicodedata.normalize("NFKD", text)
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return normalized.upper()
 
 
 def encrypt(text: str) -> str:
+    """Zašifruje vstupní text podle pravidel konkrétní šifry."""
     return normalize_text(text)
 
 
@@ -90,8 +82,12 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class MrizOutputWidget(QWidget):
+    """Qt widget pro grafické vykreslení výsledku šifry v hlavním UI."""
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -100,28 +96,33 @@ class MrizOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
         # Menší a přesnější poměr než předchozí verze.
         # Cílem je, aby výstup vypadáním seděl na klíč i ukázku.
+        """Pomocná funkce používaná interní logikou šifry."""
         cell_w = max(64, int(86 * self.scale_value))
         cell_h = max(46, int(62 * self.scale_value))
         letter_gap = max(5, int(8 * self.scale_value))
@@ -130,6 +131,7 @@ class MrizOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, word_gap, _ = self.get_metrics()
 
         if char == " ":
@@ -141,6 +143,7 @@ class MrizOutputWidget(QWidget):
         return max(28, int(36 * self.scale_value))
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -174,6 +177,7 @@ class MrizOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -188,6 +192,7 @@ class MrizOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -228,12 +233,14 @@ class MrizOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(18, int(32 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def make_pen(self, color: QColor, width: float) -> QPen:
+        """Pomocná funkce používaná interní logikou šifry."""
         pen = QPen(color)
         pen.setWidthF(width)
         pen.setCapStyle(Qt.SquareCap)
@@ -241,6 +248,7 @@ class MrizOutputWidget(QWidget):
         return pen
 
     def draw_line_with_shadow(self, painter: QPainter, p1: QPointF, p2: QPointF, line_w: float):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 155)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
@@ -278,6 +286,7 @@ class MrizOutputWidget(QWidget):
         )
 
     def draw_mriz_letter(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         info = LETTER_INFO[letter]
         row = info["row"]
         group = info["group"]
@@ -362,6 +371,7 @@ class MrizOutputWidget(QWidget):
         self.draw_dot(painter, QPointF(dot_x, dot_y), max(4.0, rect.height() * 0.076))
 
     def draw_dot(self, painter: QPainter, center: QPointF, radius: float):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 165)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")

@@ -1,17 +1,24 @@
 # -*- coding: utf-8 -*-
-"""
-Záměna písmen za čísla (A=01, Z=26)
 
-Pravidla:
-- A = 01, B = 02, ..., Z = 26
-- písmena ve slově jsou bez mezer: AHOJ -> 01081510
-- mezery mezi slovy zůstávají jako v původním textu
-- česká diakritika se při šifrování převede bez háčků a čárek: Á -> A, Š -> S
-- symboly jako ?, . , - ! zůstávají beze změny
+"""Implementace šifry Záměna písmen za čísla (A=01, Z=26) pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
 """
+
 
 import unicodedata
 
+# Základní abeceda používaná danou šifrou.
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 LETTER_TO_CODE = {letter: f"{index:02d}" for index, letter in enumerate(ALPHABET, start=1)}
 CODE_TO_LETTER = {code: letter for letter, code in LETTER_TO_CODE.items()}

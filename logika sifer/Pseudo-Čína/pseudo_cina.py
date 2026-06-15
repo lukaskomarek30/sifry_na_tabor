@@ -1,26 +1,17 @@
-# ============================================================
-# Pseudo-Čína - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Pseudo-Čína\pseudo_cina.py
-#
-# Klíč:
-# 1. řádek: A B C D E
-# 2. řádek: F G H I J
-# 3. řádek: K L M N O
-# 4. řádek: P R S T U
-# 5. řádek: V W X Y Z
-#
-# V tabulce chybí Q.
-# Podle popisu se Q zapisuje jako kombinace K + V, proto encrypt()
-# při šifrování převádí Q na KV.
-#
-# Princip:
-# - počet vodorovných čar = řádek
-# - počet svislých čar = sloupec
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-# České znaky se převádí bez háčků a čárek.
-# ============================================================
+"""Implementace šifry Pseudo-Čína pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import math
 import random
@@ -129,10 +120,13 @@ def decrypt(text: str) -> str:
     return normalize_text(cleaned)
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class PseudoCinaOutputWidget(QWidget):
     """Kreslený výstup šifry Pseudo-Čína."""
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -141,26 +135,31 @@ class PseudoCinaOutputWidget(QWidget):
         self.setMinimumHeight(190)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = encrypt(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
+        """Pomocná funkce používaná interní logikou šifry."""
         cell_w = max(40, int(58 * self.scale_value))
         cell_h = max(42, int(60 * self.scale_value))
         letter_gap = max(5, int(8 * self.scale_value))
@@ -169,6 +168,7 @@ class PseudoCinaOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, word_gap, _ = self.get_metrics()
 
         if char == " ":
@@ -180,6 +180,7 @@ class PseudoCinaOutputWidget(QWidget):
         return max(22, int(30 * self.scale_value))
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -213,6 +214,7 @@ class PseudoCinaOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -227,6 +229,7 @@ class PseudoCinaOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -267,6 +270,7 @@ class PseudoCinaOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def make_pen(self, color: QColor, width: float) -> QPen:
+        """Pomocná funkce používaná interní logikou šifry."""
         pen = QPen(color)
         pen.setWidthF(width)
         pen.setCapStyle(Qt.RoundCap)
@@ -298,6 +302,7 @@ class PseudoCinaOutputWidget(QWidget):
             points.append(QPointF(base_x + nx * offset, base_y + ny * offset))
 
         def draw_polyline(color: QColor, width: float, shift_x: float = 0.0, shift_y: float = 0.0):
+            """Pomocná funkce používaná interní logikou šifry."""
             painter.setPen(self.make_pen(color, width))
             for a, b in zip(points, points[1:]):
                 painter.drawLine(
@@ -310,6 +315,7 @@ class PseudoCinaOutputWidget(QWidget):
         draw_polyline(gold_light, max(0.45, line_w * 0.22), -0.15, -0.15)
 
     def draw_pseudo_cina_letter(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         row_count, col_count = LETTER_TO_COORDS[letter]
 
         line_w = max(1.15, rect.height() * 0.030)
@@ -368,6 +374,7 @@ class PseudoCinaOutputWidget(QWidget):
             )
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(18, int(34 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))

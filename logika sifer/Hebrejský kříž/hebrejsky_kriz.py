@@ -1,35 +1,17 @@
-# ============================================================
-# Hebrejský kříž - logika + větší kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Hebrejský kříž\hebrejsky_kriz.py
-#
-# Klíč podle obrázku:
-#
-# 1. mřížka bez tečky:
-# A B C
-# D E F
-# G H Ch
-#
-# CH se zde NEPOUŽÍVÁ jako jeden znak.
-# Pokud napíšeš "ch", zašifruje se jako C + H.
-#
-# 2. mřížka s jednou tečkou:
-# I J K
-# L M N
-# O P Q
-#
-# 3. mřížka se dvěma tečkami:
-# R S T
-# U V W
-# X Y Z
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - HebrejskyKrizOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Hebrejský kříž pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -135,6 +117,8 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class HebrejskyKrizOutputWidget(QWidget):
     """Kreslený výstup šifry Hebrejský kříž.
 
@@ -143,6 +127,7 @@ class HebrejskyKrizOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -151,27 +136,32 @@ class HebrejskyKrizOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_cell_metrics(self):
         # Větší buňka = čitelnější symbol.
+        """Vrátí rozměrové parametry buňky odvozené od aktuálního měřítka."""
         cell_w = max(54, int(74 * self.scale_value))
         cell_h = max(48, int(66 * self.scale_value))
         letter_gap = max(8, int(12 * self.scale_value))
@@ -180,6 +170,7 @@ class HebrejskyKrizOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, _, _ = self.get_cell_metrics()
 
         if char in HEBREW_CROSS_MAP:
@@ -188,6 +179,7 @@ class HebrejskyKrizOutputWidget(QWidget):
         return max(22, int(28 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -223,6 +215,7 @@ class HebrejskyKrizOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -237,6 +230,7 @@ class HebrejskyKrizOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -278,12 +272,14 @@ class HebrejskyKrizOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(16, int(28 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def draw_cipher_symbol(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         col, row, dot_count = HEBREW_CROSS_MAP[letter]
 
         shadow = QColor(0, 0, 0, 170)
@@ -354,6 +350,7 @@ class HebrejskyKrizOutputWidget(QWidget):
             self.draw_dots(painter, glyph, dot_count)
 
     def draw_dots(self, painter: QPainter, glyph: QRectF, dot_count: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
         shadow = QColor(0, 0, 0, 170)

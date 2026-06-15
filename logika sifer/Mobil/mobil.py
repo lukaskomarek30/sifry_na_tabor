@@ -1,41 +1,17 @@
-# ============================================================
-# Mobil - logika šifrování a dešifrování
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Mobil\mobil.py
-#
-# Klíč:
-#
-# 2 = A B C
-# 3 = D E F
-# 4 = G H I
-# 5 = J K L
-# 6 = M N O
-# 7 = P Q R S
-# 8 = T U V
-# 9 = W X Y Z
-#
-# Princip:
-# A = 2
-# B = 22
-# C = 222
-#
-# Formát výstupu podle požadavku:
-# - čísla jednoho písmene jsou u sebe
-# - písmena jsou bez mezery
-# - slova od sebe mají jednu mezeru
-#
-# Příklad:
-# Ahoj jak se máš?
-# 2446665 5255 777733 627777?
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-# Číslice ve vstupu se zapisují jako [1], [2], aby se nepletly se šifrou.
-#
-# Důležité:
-# Bez mezer mezi písmeny není dešifrování vždy jednoznačné.
-# Například 222 může znamenat C, nebo AB, nebo BA, nebo AAA.
-# Dešifrování proto používá nejdelší možný platný zápis.
-# ============================================================
+"""Implementace šifry Mobil pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -162,7 +138,7 @@ def split_compact_mobile_word(raw_word: str) -> list[str]:
                 index = end + 1
                 continue
 
-        # Symboly necháme tak, jak jsou.
+        # Symboly se zachovají tak, jak jsou.
         tokens.append(char)
         index += 1
 

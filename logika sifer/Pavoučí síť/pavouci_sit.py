@@ -1,30 +1,17 @@
-# ============================================================
-# Pavoučí síť
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Pavoučí síť\pavouci_sit.py
-#
-# Klíč podle dodaného obrázku:
-#
-# A = BC    B = AC    C = AB
-# D = EF    E = DF    F = DE
-# G = HI    H = GI    I = GH
-# J = KL    K = JL    L = JK
-# M = NO    N = MO    O = MN
-# P = RS    Q = O     R = PS    S = PR
-# T = UV    U = TV    V = TU
-# W = W
-# X = YZ    Y = XZ    Z = XY
-#
-# Pravidla:
-# - česká diakritika se převede na základní znaky
-# - písmena se zašifrují podle klíče
-# - symboly jako ?, . , - ! : ; / zůstávají symboly
-# - mezery mezi slovy zůstávají jako mezery
-#
-# Příklad:
-# AHOJ JAK SE MÁŠ?
-# BCGIMNKL KLBCJL PRDF NOBCPR?
-# ============================================================
+"""Implementace šifry Pavoučí síť pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import re
 import unicodedata
@@ -134,7 +121,7 @@ def _decode_alpha_token(token: str) -> str:
             index += 1
             continue
 
-        # Neznámý znak necháme v hranaté závorce, aby bylo vidět, kde je chyba.
+        # Nepodporovaný znak necháme v hranaté závorce, aby bylo vidět, kde je chyba.
         result.append(f"[{one}]")
         index += 1
 

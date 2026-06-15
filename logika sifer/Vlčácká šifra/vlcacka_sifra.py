@@ -1,26 +1,17 @@
-# ============================================================
-# Vlčácká šifra
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Vlčácká šifra\vlcacka_sifra.py
-#
-# Klíč podle obrázku:
-# 1: A B C      -> A=11, B=12, C=13
-# 2: D E F      -> D=21, E=22, F=23
-# 3: G H CH     -> G=31, H=32, CH=33
-# 4: I J K      -> I=41, J=42, K=43
-# 5: L M N      -> L=51, M=52, N=53
-# 6: O P Q      -> O=61, P=62, Q=63
-# 7: R S T      -> R=71, S=72, T=73
-# 8: U V W      -> U=81, V=82, W=83
-# 9: X Y Z      -> X=91, Y=92, Z=93
-#
-# Pravidla výstupu:
-# - česká diakritika se převede na základní znaky
-# - CH se bere jako jeden znak podle klíče
-# - písmena ve slově jsou oddělena jednou mezerou
-# - slova jsou oddělena dvěma mezerami
-# - symboly jako ?, . , - ! : ; / zůstávají symboly
-# ============================================================
+"""Implementace šifry Vlčácká šifra pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import re
 import unicodedata

@@ -1,25 +1,17 @@
-# ============================================================
-# Morseova abeceda – hory - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Morseova abeceda – hory\morseova_abeceda_hory.py
-#
-# Klíč:
-# Používá klasickou Morseovu abecedu A-Z.
-#
-# Vizuální varianta:
-# - tečka  .  = malá hora
-# - čárka  -  = velká hora
-#
-# Pravidla:
-# - česká diakritika se převede na základní znaky
-# - symboly jako ?, . , - ! : ; / zůstávají symboly
-# - výsledek se kreslí přes QPainter
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - MorseHoryOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Morseova abeceda – hory pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -28,6 +20,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QBrush
 from PySide6.QtWidgets import QWidget
 
 
+# Mapování Morseovy abecedy pro základní textovou logiku.
 MORSE_CODE = {
     "A": ".-",
     "B": "-...",
@@ -180,6 +173,8 @@ def decrypt(text: str) -> str:
     return " ".join(decoded_words)
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class MorseHoryOutputWidget(QWidget):
     """Kreslený výstup šifry Morseova abeceda – hory.
 
@@ -189,6 +184,7 @@ class MorseHoryOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -197,26 +193,31 @@ class MorseHoryOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
+        """Pomocná funkce používaná interní logikou šifry."""
         dot_w = max(13, int(18 * self.scale_value))
         dash_w = max(23, int(32 * self.scale_value))
         mountain_h = max(27, int(38 * self.scale_value))
@@ -228,6 +229,7 @@ class MorseHoryOutputWidget(QWidget):
         return dot_w, dash_w, mountain_h, inside_gap, letter_gap, word_gap, line_gap, cell_h
 
     def letter_width(self, char: str) -> int:
+        """Pomocná funkce používaná interní logikou šifry."""
         dot_w, dash_w, _, inside_gap, _, _, _, _ = self.get_metrics()
 
         if char in MORSE_CODE:
@@ -242,6 +244,7 @@ class MorseHoryOutputWidget(QWidget):
         return max(22, int(28 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -277,6 +280,7 @@ class MorseHoryOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -291,6 +295,7 @@ class MorseHoryOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -332,12 +337,14 @@ class MorseHoryOutputWidget(QWidget):
             x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(16, int(28 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def draw_morse_mountains(self, painter: QPainter, rect: QRectF, code: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         dot_w, dash_w, mountain_h, inside_gap, _, _, _, _ = self.get_metrics()
 
         x = rect.left()
@@ -352,6 +359,7 @@ class MorseHoryOutputWidget(QWidget):
                 x += dash_w + inside_gap
 
     def draw_mountain(self, painter: QPainter, x: float, base_y: float, width: float, height: float, small: bool):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 175)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")

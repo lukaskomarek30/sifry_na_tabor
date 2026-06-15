@@ -1,16 +1,17 @@
-# ============================================================
-# Okno - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Okno\okno.py
-#
-# OPRAVA PODLE KLÍČE:
-# Tato verze nekreslí znaky přibližně z obdélníků.
-# Každý znak A-Z je uložený jako malá 26×26 maska přímo podle dodaného klíče.
-# Díky tomu výstup sedí na klíč mnohem přesněji.
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-# České znaky se převádí bez háčků a čárek.
-# ============================================================
+"""Implementace šifry Okno pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -1355,10 +1356,13 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class OknoOutputWidget(QWidget):
     """Kreslený výstup šifry Okno podle bitmapových masek z klíče."""
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -1367,26 +1371,31 @@ class OknoOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
+        """Pomocná funkce používaná interní logikou šifry."""
         cell_w = max(52, int(72 * self.scale_value))
         cell_h = max(50, int(68 * self.scale_value))
         letter_gap = max(7, int(10 * self.scale_value))
@@ -1395,6 +1404,7 @@ class OknoOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, word_gap, _ = self.get_metrics()
 
         if char == " ":
@@ -1406,6 +1416,7 @@ class OknoOutputWidget(QWidget):
         return max(22, int(30 * self.scale_value))
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -1439,6 +1450,7 @@ class OknoOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -1453,6 +1465,7 @@ class OknoOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -1493,6 +1506,7 @@ class OknoOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_okno_letter(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         runs = OKNO_MASK_RLE.get(letter)
         if not runs:
             return
@@ -1536,6 +1550,7 @@ class OknoOutputWidget(QWidget):
         )
 
     def draw_mask_runs(self, painter: QPainter, runs, start_x: float, start_y: float, scale: float, color: QColor, alpha_scale: float = 1.0):
+        """Pomocná funkce používaná interní logikou šifry."""
         color = QColor(color)
         color.setAlpha(max(0, min(255, int(color.alpha() * alpha_scale))))
         painter.setPen(Qt.NoPen)
@@ -1555,6 +1570,7 @@ class OknoOutputWidget(QWidget):
             )
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(18, int(32 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))

@@ -1,20 +1,17 @@
-# ============================================================
-# Moonovo písmo - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Moonovo písmo\moonovo_pismo.py
-#
-# Klíč je podle obrázku A-Z.
-#
-# Pravidla:
-# - česká diakritika se převede na základní znaky
-# - symboly jako ?, . , - ! : ; / zůstávají symboly
-# - výsledek se kreslí přes QPainter
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - MoonovoPismoOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Moonovo písmo pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -71,6 +68,8 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class MoonovoPismoOutputWidget(QWidget):
     """Kreslený výstup šifry Moonovo písmo.
 
@@ -79,6 +78,7 @@ class MoonovoPismoOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -87,26 +87,31 @@ class MoonovoPismoOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_cell_metrics(self):
+        """Vrátí rozměrové parametry buňky odvozené od aktuálního měřítka."""
         cell_w = max(52, int(70 * self.scale_value))
         cell_h = max(50, int(68 * self.scale_value))
         letter_gap = max(8, int(12 * self.scale_value))
@@ -115,6 +120,7 @@ class MoonovoPismoOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, _, _ = self.get_cell_metrics()
 
         if char in MOON_LETTERS:
@@ -123,6 +129,7 @@ class MoonovoPismoOutputWidget(QWidget):
         return max(22, int(28 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -158,6 +165,7 @@ class MoonovoPismoOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -172,6 +180,7 @@ class MoonovoPismoOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -213,15 +222,18 @@ class MoonovoPismoOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(16, int(28 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def p(self, rect: QRectF, x: float, y: float) -> QPointF:
+        """Pomocná funkce používaná interní logikou šifry."""
         return QPointF(rect.left() + rect.width() * x, rect.top() + rect.height() * y)
 
     def draw_path(self, painter: QPainter, path: QPainterPath, rect: QRectF):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 175)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
@@ -250,6 +262,7 @@ class MoonovoPismoOutputWidget(QWidget):
         painter.drawPath(path)
 
     def draw_lines(self, painter: QPainter, rect: QRectF, lines):
+        """Pomocná funkce používaná interní logikou šifry."""
         path = QPainterPath()
 
         for start, end in lines:
@@ -261,6 +274,7 @@ class MoonovoPismoOutputWidget(QWidget):
         self.draw_path(painter, path, rect)
 
     def draw_curve_path(self, painter: QPainter, rect: QRectF, commands):
+        """Pomocná funkce používaná interní logikou šifry."""
         path = QPainterPath()
 
         for cmd in commands:
@@ -281,6 +295,7 @@ class MoonovoPismoOutputWidget(QWidget):
 
     def draw_moon_letter(self, painter: QPainter, rect: QRectF, letter: str):
         # Vnitřní prostor symbolu.
+        """Pomocná funkce používaná interní logikou šifry."""
         glyph = rect.adjusted(
             rect.width() * 0.13,
             rect.height() * 0.13,

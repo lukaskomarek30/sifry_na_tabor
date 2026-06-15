@@ -1,28 +1,25 @@
 # -*- coding: utf-8 -*-
+
+"""Implementace šifry Záměna písmen za čísla (A=26, Z=01) pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Modul je čistě textový a nevyžaduje grafické závislosti.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
 """
-Záměna písmen za čísla (A=26, Z=01)
 
-Princip:
-    A = 26
-    B = 25
-    C = 24
-    ...
-    Z = 01
-
-Při šifrování:
-    - písmena ve slově jsou psaná hned za sebou jako dvojciferná čísla,
-    - mezera mezi slovy zůstává jako jedna mezera,
-    - symboly jako ?,.-! zůstávají beze změny,
-    - česká diakritika se převede na základní písmeno.
-
-Příklad:
-    Ahoj jak se máš?
-    26191217 172616 0822 142608?
-"""
 
 import unicodedata
 
 
+# Základní abeceda používaná danou šifrou.
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 ENCRYPT_MAP = {

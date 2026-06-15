@@ -1,37 +1,17 @@
-# ============================================================
-# Malý polský kříž - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Malý polský kříž\maly_polsky_kriz.py
-#
-# Klíč podle obrázku:
-#
-# 1) Mřížka bez tečky:
-# A B C
-# D E F
-# G H I
-#
-# 2) Mřížka s jednou tečkou:
-# J K L
-# M N O
-# P Q R
-#
-# 3) Kříž X bez tečky:
-#     S
-#   T   U
-#     V
-#
-# 4) Kříž X s jednou tečkou:
-#     W
-#   X   Y
-#     Z
-#
-# Symboly jako ?, . , - ! : ; / zůstávají symboly.
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - MalyPolskyKrizOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Malý polský kříž pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -168,6 +148,8 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class MalyPolskyKrizOutputWidget(QWidget):
     """Kreslený výstup šifry Malý polský kříž.
 
@@ -176,6 +158,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.scale_value = 1.0
@@ -184,27 +167,32 @@ class MalyPolskyKrizOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_cell_metrics(self):
         # Větší a čitelnější symboly.
+        """Vrátí rozměrové parametry buňky odvozené od aktuálního měřítka."""
         cell_w = max(54, int(74 * self.scale_value))
         cell_h = max(48, int(66 * self.scale_value))
         letter_gap = max(8, int(12 * self.scale_value))
@@ -213,6 +201,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, _, _ = self.get_cell_metrics()
 
         if char in SMALL_POLISH_CROSS_MAP:
@@ -221,6 +210,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
         return max(22, int(28 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -256,6 +246,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -270,6 +261,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -311,12 +303,14 @@ class MalyPolskyKrizOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(16, int(28 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def draw_cipher_symbol(self, painter: QPainter, rect: QRectF, letter: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         data = SMALL_POLISH_CROSS_MAP[letter]
 
         if data[0] == "grid":
@@ -329,6 +323,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
             self.draw_x_symbol(painter, rect, position, dot_count)
 
     def draw_grid_symbol(self, painter: QPainter, rect: QRectF, col: int, row: int, dot_count: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 170)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
@@ -365,6 +360,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
             self.draw_dots(painter, glyph, dot_count)
 
     def draw_x_symbol(self, painter: QPainter, rect: QRectF, position: str, dot_count: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         shadow = QColor(0, 0, 0, 170)
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
@@ -399,6 +395,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
             self.draw_dots(painter, glyph, dot_count)
 
     def draw_lines(self, painter: QPainter, lines, base_height: float, shadow: QColor, gold: QColor, gold_light: QColor):
+        """Pomocná funkce používaná interní logikou šifry."""
         line_w = max(2.8, base_height * 0.075)
 
         shadow_pen = QPen(shadow)
@@ -429,6 +426,7 @@ class MalyPolskyKrizOutputWidget(QWidget):
             painter.drawLine(p1, p2)
 
     def draw_dots(self, painter: QPainter, glyph: QRectF, dot_count: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         gold = QColor("#f3d79a")
         gold_light = QColor("#fff0bd")
         shadow = QColor(0, 0, 0, 170)

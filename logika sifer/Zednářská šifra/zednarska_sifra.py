@@ -1,20 +1,17 @@
-# ============================================================
-# Zednářská šifra - logika + kreslení přes QPainter
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Zednářská šifra\zednarska_sifra.py
-#
-# Pravidla:
-# - česká diakritika se převede na základní znaky
-# - J se v tomto klíči nepoužívá samostatně, proto se při šifrování bere jako I
-# - symboly jako ?, . , - ! : ; / zůstávají symboly
-# - výsledek se kreslí přes QPainter
-# - oprava: trojúhelníky a štítky nyní míří špičkou do středu přesně podle klíče
-#
-# Soubor obsahuje:
-# - encrypt(text)
-# - decrypt(text)
-# - ZednarskaSifraOutputWidget pro kreslený výstup
-# ============================================================
+"""Implementace šifry Zednářská šifra pro Šifrátor Mraveniště.
+
+Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
+pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
+i jako součást hlavní aplikace.
+Součástí modulu je také Qt widget pro kreslené vykreslení výsledku v hlavním aplikačním rozhraní.
+
+Základní pravidla implementace:
+- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
+- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
+  kde to dává pro danou šifru smysl,
+- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
+- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+"""
 
 import unicodedata
 
@@ -115,10 +112,13 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+
+# Grafická vrstva pro vykreslení výsledku v Qt rozhraní.
 class ZednarskaSifraOutputWidget(QWidget):
     """Kreslený výstup Zednářské šifry."""
 
     def __init__(self, parent=None):
+        """Pomocná funkce používaná interní logikou šifry."""
         super().__init__(parent)
         self.cipher_text = ""
         self.tokens: list[str] = []
@@ -128,11 +128,13 @@ class ZednarskaSifraOutputWidget(QWidget):
         self.setMinimumHeight(175)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a aktualizuje rozměry widgetu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text určený pro vykreslení a obnoví obsah widgetu."""
         self.cipher_text = normalize_text(text)
         self.tokens = tokenize_text(text)
         self.update_content_size()
@@ -140,16 +142,19 @@ class ZednarskaSifraOutputWidget(QWidget):
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu a obnoví jeho vykreslení."""
         self.cipher_text = ""
         self.tokens = []
         self.update_content_size()
         self.update()
 
     def resizeEvent(self, event):
+        """Reaguje na změnu velikosti widgetu a přepočítá rozložení obsahu."""
         super().resizeEvent(event)
         self.update_content_size()
 
     def get_metrics(self):
+        """Pomocná funkce používaná interní logikou šifry."""
         cell_w = max(46, int(70 * self.scale_value))
         cell_h = max(54, int(82 * self.scale_value))
         letter_gap = max(8, int(13 * self.scale_value))
@@ -158,6 +163,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def token_width(self, token: str) -> int:
+        """Pomocná funkce používaná interní logikou šifry."""
         cell_w, _, _, word_gap, _ = self.get_metrics()
 
         if token == " ":
@@ -169,6 +175,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         return max(24, int(34 * self.scale_value))
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá minimální výšku potřebnou pro zobrazení celého obsahu."""
         margin_left = 14
         margin_right = 14
         margin_top = 10
@@ -202,6 +209,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu."""
         parent = self.parentWidget()
         width = self.width()
 
@@ -216,6 +224,7 @@ class ZednarskaSifraOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí aktuální obsah widgetu pomocí QPainteru."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -256,6 +265,7 @@ class ZednarskaSifraOutputWidget(QWidget):
                 x += token_w + letter_gap
 
     def draw_masonic_token(self, painter: QPainter, rect: QRectF, token: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         style = STYLE_BY_TOKEN[token]
         direction = DIRECTION_BY_TOKEN[token]
 
@@ -280,6 +290,7 @@ class ZednarskaSifraOutputWidget(QWidget):
             self.draw_dot(painter, rect, color, direction)
 
     def draw_cross(self, painter: QPainter, rect: QRectF, color: QColor):
+        """Pomocná funkce používaná interní logikou šifry."""
         pen_width = max(3, int(5 * self.scale_value))
         painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         cx = rect.center().x()
@@ -367,6 +378,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         ]
 
     def draw_triangle(self, painter: QPainter, rect: QRectF, direction: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         polygon = QPolygonF(self.triangle_points(rect, direction))
         painter.drawPolygon(polygon)
 
@@ -425,6 +437,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         ]
 
     def draw_kite(self, painter: QPainter, rect: QRectF, direction: int):
+        """Pomocná funkce používaná interní logikou šifry."""
         polygon = QPolygonF(self.kite_points(rect, direction))
         painter.drawPolygon(polygon)
 
@@ -454,6 +467,7 @@ class ZednarskaSifraOutputWidget(QWidget):
         painter.setBrush(Qt.NoBrush)
 
     def draw_plain_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Pomocná funkce používaná interní logikou šifry."""
         font = QFont("Georgia", max(18, int(42 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
