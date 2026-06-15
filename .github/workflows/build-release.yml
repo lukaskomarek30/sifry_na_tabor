@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Verze bez pismene v, napr. 0.0.1"
+        description: "Verze bez pismene v, napr. 0.0.5"
         required: true
-        default: "0.0.1"
+        default: "0.0.5"
 
 permissions:
   contents: write
@@ -22,8 +22,10 @@ jobs:
         include:
           - platform: windows-x64
             os: windows-latest
+
           - platform: macos-arm64
             os: macos-26
+
           - platform: macos-x64
             os: macos-26-intel
 
@@ -35,6 +37,13 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      - name: Zobrazit system
+        shell: bash
+        run: |
+          echo "Platforma: ${{ matrix.platform }}"
+          python --version
+          python -c "import platform; print(platform.system(), platform.machine())"
 
       - name: Nainstalovat knihovny
         shell: bash
@@ -49,16 +58,135 @@ jobs:
         run: |
           printf "%s\n" "$VERSION" | python build_release.py
 
-      - name: Najit ZIP
-        id: find_zip
+      - name: Najit spravny release ZIP
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
-          ZIP_PATH="$(find release -type f -name '*.zip' | head -n 1)"
-          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
-          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
-          echo "Nalezen ZIP: $ZIP_PATH"
+          echo "Vsechny ZIP soubory:"
+          find release -type f -name "*.zip" || true
 
-      - name: Nahrat ZIP do GitHub Release
+          ZIP_PATH="$(find release -type f -name "Sifrator_Mraveniste*${PLATFORM}*_v${VERSION}.zip" | head -n 1)"
+
+          if [ -z "$ZIP_PATH" ]; then
+            echo "CHYBA: Nenasel jsem spravny release ZIP pro platformu ${PLATFORM}."
+            echo "Hledal jsem: Sifrator_Mraveniste*${PLATFORM}*_v${VERSION}.zip"
+            exit 1
+          fi
+
+          mkdir -p upload
+          cp "$ZIP_PATH" "upload/$(basename "$ZIP_PATH")"
+
+          echo "Spravny ZIP:"
+          ls -lh upload/
+
+      - name: Ulozit ZIP jako artifact pro finalni upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: upload/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish release and update.json
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Stahnout repozitar
+        uses: actions/checkout@v6
+
+      - name: Stahnout ZIPy z buildu
+        uses: actions/download-artifact@v4
+        with:
+          path: all-zips
+          merge-multiple: true
+
+      - name: Zkontrolovat ZIPy
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "Stazene ZIPy:"
+          find all-zips -type f -name "*.zip" -print
+
+          WIN_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*windows-x64*_v${VERSION}.zip" | head -n 1)"
+          MAC_ARM_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*macos-arm64*_v${VERSION}.zip" | head -n 1)"
+          MAC_X64_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*macos-x64*_v${VERSION}.zip" | head -n 1)"
+
+          if [ -z "$WIN_ZIP" ]; then
+            echo "CHYBA: Chybi Windows ZIP."
+            exit 1
+          fi
+
+          if [ -z "$MAC_ARM_ZIP" ]; then
+            echo "CHYBA: Chybi macOS ARM64 ZIP."
+            exit 1
+          fi
+
+          if [ -z "$MAC_X64_ZIP" ]; then
+            echo "CHYBA: Chybi macOS x64 ZIP."
+            exit 1
+          fi
+
+          echo "WIN_ZIP=$WIN_ZIP" >> "$GITHUB_ENV"
+          echo "MAC_ARM_ZIP=$MAC_ARM_ZIP" >> "$GITHUB_ENV"
+          echo "MAC_X64_ZIP=$MAC_X64_ZIP" >> "$GITHUB_ENV"
+
+          echo "WIN_NAME=$(basename "$WIN_ZIP")" >> "$GITHUB_ENV"
+          echo "MAC_ARM_NAME=$(basename "$MAC_ARM_ZIP")" >> "$GITHUB_ENV"
+          echo "MAC_X64_NAME=$(basename "$MAC_X64_ZIP")" >> "$GITHUB_ENV"
+
+          echo "WIN_SHA=$(sha256sum "$WIN_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "MAC_ARM_SHA=$(sha256sum "$MAC_ARM_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "MAC_X64_SHA=$(sha256sum "$MAC_X64_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Vytvorit update.json
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          version = os.environ["VERSION"]
+          repo = os.environ["REPOSITORY"]
+          tag = f"v{version}"
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          data = {
+              "version": version,
+              "notes": f"Nova verze {version}.",
+              "platforms": {
+                  "windows-x64": {
+                      "package_url": f"{base_url}/{os.environ['WIN_NAME']}",
+                      "sha256": os.environ["WIN_SHA"],
+                      "file_name": os.environ["WIN_NAME"],
+                  },
+                  "macos-arm64": {
+                      "package_url": f"{base_url}/{os.environ['MAC_ARM_NAME']}",
+                      "sha256": os.environ["MAC_ARM_SHA"],
+                      "file_name": os.environ["MAC_ARM_NAME"],
+                  },
+                  "macos-x64": {
+                      "package_url": f"{base_url}/{os.environ['MAC_X64_NAME']}",
+                      "sha256": os.environ["MAC_X64_SHA"],
+                      "file_name": os.environ["MAC_X64_NAME"],
+                  },
+              },
+          }
+
+          with open("update.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Vytvorit nebo najit GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,10 +194,55 @@ jobs:
         run: |
           TAG="v$VERSION"
 
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG uz existuje."
+          else
             gh release create "$TAG" \
               --title "$TAG" \
               --notes "Nova verze $VERSION."
           fi
 
-          gh release upload "$TAG" "$ZIP_PATH" --clobber
+      - name: Smazat spatne/stare assety v Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          gh release delete-asset "$TAG" "base_library.zip" -y || true
+
+          gh release delete-asset "$TAG" "$WIN_NAME" -y || true
+          gh release delete-asset "$TAG" "$MAC_ARM_NAME" -y || true
+          gh release delete-asset "$TAG" "$MAC_X64_NAME" -y || true
+          gh release delete-asset "$TAG" "update.json" -y || true
+
+      - name: Nahrat spravne ZIPy do GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          gh release upload "$TAG" "$WIN_ZIP" --clobber
+          gh release upload "$TAG" "$MAC_ARM_ZIP" --clobber
+          gh release upload "$TAG" "$MAC_X64_ZIP" --clobber
+          gh release upload "$TAG" update.json --clobber
+
+      - name: Commitnout update.json do repozitare
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add update.json
+
+          if git diff --cached --quiet; then
+            echo "update.json se nezmenil."
+          else
+            git commit -m "Update release metadata v$VERSION"
+            git push
+          fi
