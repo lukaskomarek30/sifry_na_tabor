@@ -1,3 +1,19 @@
+"""Buildovací skript pro vydání aplikace Šifrátor Mraveniště.
+
+Skript automatizuje celý proces přípravy nové verze:
+- načtení a případnou aktualizaci verze v main.py,
+- vytvoření nebo použití samostatného buildovacího virtuálního prostředí,
+- kontrolu a instalaci buildovacích závislostí,
+- přípravu ikon aplikace pro Windows a macOS,
+- sestavení aplikace přes PyInstaller,
+- vytvoření release složky a ZIP balíčku,
+- výpočet SHA256 kontrolního součtu,
+- aktualizaci souboru update.json pro automatické aktualizace.
+
+Výsledkem je platformně specifický balíček připravený k nahrání
+do GitHub Releases a odpovídající update.json pro repozitář.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,21 +28,25 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+# Základní identifikace aplikace a GitHub repozitáře.
 APP_NAME_DEFAULT = "Sifrator_Mraveniste"
 REPO_OWNER = "lukaskomarek30"
 REPO_NAME = "sifry_na_tabor"
 
+# Kořen projektu je vždy složka, ve které je uložen tento build skript.
 ROOT = Path(__file__).resolve().parent
 LOG_PATH = ROOT / "build_log.txt"
 
 
 def log(message: str = "") -> None:
+    """Zapíše zprávu současně do konzole i do build logu."""
     print(message)
     with LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(message + "\n")
 
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    """Spustí externí příkaz, průběžně zaloguje výstup a volitelně kontroluje návratový kód."""
     text = " ".join(f'"{c}"' if " " in c else c for c in cmd)
     log(f"\n> {text}")
     p = subprocess.run(cmd, cwd=str(cwd or ROOT), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -40,26 +60,31 @@ def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subproce
 
 
 def read_text(path: Path) -> str:
+    """Načte textový soubor s podporou UTF-8 BOM, které může vzniknout při úpravách ve Windows editorech."""
     return path.read_text(encoding="utf-8-sig")
 
 
 def write_text(path: Path, text: str) -> None:
+    """Zapíše textový soubor v čistém UTF-8 kódování."""
     path.write_text(text, encoding="utf-8")
 
 
 def get_current_version(main_py: Path) -> str:
+    """Načte aktuální hodnotu APP_VERSION ze souboru main.py."""
     s = read_text(main_py)
     m = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', s, re.MULTILINE)
     return m.group(1).strip() if m else ""
 
 
 def get_app_name(main_py: Path) -> str:
+    """Načte název aplikace z APP_NAME, případně použije výchozí hodnotu."""
     s = read_text(main_py)
     m = re.search(r'^APP_NAME\s*=\s*["\']([^"\']+)["\']', s, re.MULTILINE)
     return m.group(1).strip() if m else APP_NAME_DEFAULT
 
 
 def set_version(main_py: Path, version: str) -> None:
+    """Aktualizuje hodnotu APP_VERSION v main.py; pokud chybí, doplní ji na začátek souboru."""
     s = read_text(main_py)
     s2, count = re.subn(
         r'^APP_VERSION\s*=\s*["\'].*?["\']',
@@ -74,6 +99,7 @@ def set_version(main_py: Path, version: str) -> None:
 
 
 def sha256_file(path: Path) -> str:
+    """Vypočítá SHA256 hash souboru po blocích, aby skript zvládl i větší ZIP balíčky."""
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -82,6 +108,7 @@ def sha256_file(path: Path) -> str:
 
 
 def get_platform_key() -> str:
+    """Vrátí normalizovaný klíč platformy používaný v update.json a názvech release balíčků."""
     system = platform.system().lower()
     machine = platform.machine().lower()
 
@@ -104,12 +131,16 @@ def get_platform_key() -> str:
 
 
 def add_data_arg(src: Path, dst: str) -> str:
+    """Sestaví parametr --add-data pro PyInstaller se správným oddělovačem podle operačního systému."""
     separator = ";" if os.name == "nt" else ":"
     return f"{src}{separator}{dst}"
 
 
 def zip_folder_contents(src_dir: Path, zip_path: Path) -> None:
-    """Zabalí obsah složky přímo do kořene ZIPu."""
+    """Zabalí obsah složky přímo do kořene ZIP archivu.
+    
+    Tento formát se používá pro Windows build, kde updater očekává,
+    že EXE a podpůrné složky budou po rozbalení přímo v kořeni balíčku."""
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
@@ -119,10 +150,10 @@ def zip_folder_contents(src_dir: Path, zip_path: Path) -> None:
 
 
 def zip_path_with_root(src_path: Path, zip_path: Path, root_name: str | None = None) -> None:
-    """Zabalí soubor/složku tak, aby v ZIPu zůstala kořenová složka.
-
-    Používá se hlavně pro macOS .app balíček.
-    """
+    """Zabalí soubor nebo složku do ZIP archivu včetně kořenové položky.
+    
+    Tento formát je důležitý hlavně pro macOS .app balíček, protože
+    aplikace musí po rozbalení zůstat jako jeden kompletní .app adresář."""
     if zip_path.exists():
         zip_path.unlink()
 
@@ -139,12 +170,17 @@ def zip_path_with_root(src_path: Path, zip_path: Path, root_name: str | None = N
 
 
 def copytree_fresh(src: Path, dst: Path) -> None:
+    """Zkopíruje složku do cíle a předem odstraní případnou starší kopii."""
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
 
 
 def make_icons(venv_python: Path) -> tuple[Path | None, Path | None]:
+    """Připraví aplikační ikony app.ico a app.icns z hlavního logo.png.
+    
+    Windows používá soubor ICO, macOS používá ICNS. Pokud ikony už existují,
+    skript je znovu negeneruje a pouze je použije."""
     ico = ROOT / "icons" / "app.ico"
     icns = ROOT / "icons" / "app.icns"
     logo = ROOT / "icons" / "logo.png"
@@ -186,6 +222,7 @@ def make_icons(venv_python: Path) -> tuple[Path | None, Path | None]:
 
 
 def load_existing_update_json(path: Path) -> dict:
+    """Načte existující update.json a při chybě vrátí prázdnou konfiguraci."""
     if not path.exists():
         return {}
     try:
@@ -196,6 +233,10 @@ def load_existing_update_json(path: Path) -> dict:
 
 
 def write_platform_update_json(path: Path, version: str, platform_key: str, package_url: str, sha: str, zip_name: str) -> dict:
+    """Zapíše nebo aktualizuje položku aktuální platformy v update.json.
+    
+    Ostatní platformy v sekci platforms zůstávají zachované, aby bylo možné
+    vydávat Windows a macOS balíčky postupně z různých systémů."""
     data = load_existing_update_json(path)
 
     platforms = data.get("platforms")
@@ -220,6 +261,7 @@ def write_platform_update_json(path: Path, version: str, platform_key: str, pack
 
 
 def validate_project_files(main_py: Path, update_manager_py: Path, pirate_key_renderer_py: Path) -> None:
+    """Ověří, že ve složce projektu existují všechny soubory potřebné pro sestavení a aktualizace."""
     if not main_py.exists():
         raise RuntimeError("V teto slozce neni main.py. Dej build_release.py do hlavni slozky projektu.")
     if not (ROOT / "icons").is_dir():
@@ -233,6 +275,8 @@ def validate_project_files(main_py: Path, update_manager_py: Path, pirate_key_re
 
 
 def main() -> int:
+    """Provede kompletní build workflow pro aktuálně detekovanou platformu."""
+    # Každý build začíná čistým logem, aby bylo možné jednoduše dohledat chyby z posledního sestavení.
     LOG_PATH.write_text("==== BUILD LOG - Sifrator Mraveniste ====\n", encoding="utf-8")
 
     platform_key = get_platform_key()
@@ -245,6 +289,7 @@ def main() -> int:
     log(f"Log:       {LOG_PATH}")
     log("")
 
+    # Skript aktuálně vytváří oficiální release balíčky pouze pro Windows a macOS.
     if platform_key not in ("windows-x64", "macos-arm64", "macos-x64"):
         raise RuntimeError(f"Tento build skript je pripraveny pro Windows/macOS. Detekovana platforma: {platform_key}")
 
@@ -252,6 +297,7 @@ def main() -> int:
     update_manager_py = ROOT / "update_manager.py"
     pirate_key_renderer_py = ROOT / "pirate_key_renderer.py"
 
+    # Před spuštěním buildu se ověří struktura projektu, aby se chyba neprojevila až v PyInstalleru.
     validate_project_files(main_py, update_manager_py, pirate_key_renderer_py)
 
     current_version = get_current_version(main_py)
@@ -284,6 +330,7 @@ def main() -> int:
     else:
         venv_python = venv_dir / "bin" / "python"
 
+    # Build používá vlastní virtuální prostředí, aby nebyl závislý na knihovnách v běžném Pythonu uživatele.
     if not venv_python.exists():
         log(f"\nVytvarim virtualni prostredi: {venv_dir}")
         run([sys.executable, "-m", "venv", str(venv_dir)])
@@ -294,18 +341,22 @@ def main() -> int:
     run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"])
     run([str(venv_python), "-m", "pip", "install", "--no-cache-dir", "pyinstaller", "PySide6", "Pillow"])
 
+    # Ikony se připravují až po instalaci Pillow, protože generování ICO/ICNS používá PIL.
     ico_path, icns_path = make_icons(venv_python)
 
+    # update.json se přibalí do aplikace, aby měl build vždy dostupnou základní aktualizační konfiguraci.
     temp_update_json = ROOT / "update.json"
     if not temp_update_json.exists():
         temp_update_json.write_text(json.dumps({"version": version, "notes": "", "platforms": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
         log("Vytvoren docasny update.json")
 
+    # Staré PyInstaller výstupy se mažou kvůli opakovatelnosti buildu a prevenci zbytkových souborů.
     for old in [ROOT / "build", ROOT / "dist"]:
         if old.exists():
             log(f"Mazu stare: {old.name}")
             shutil.rmtree(old, ignore_errors=True)
 
+    # Spec soubor se nechává generovat znovu, aby odpovídal aktuálním parametrům skriptu.
     spec = ROOT / f"{app_name}.spec"
     if spec.exists():
         spec.unlink()
@@ -325,14 +376,16 @@ def main() -> int:
         "--name", app_name,
     ]
 
-    # Na Windows chceme, aby icons/ a logika sifer/ byly vedle EXE,
-    # protože tak funguje aktualizace přes robocopy /MIR.
+    # Windows build musí mít podpůrné složky přímo vedle EXE.
+    # Updater následně provádí zrcadlové přepsání přes robocopy /MIR.
     if os.name == "nt":
         cmd.extend(["--contents-directory", "."])
 
+    # Platformní ikona se použije jen v případě, že se ji podařilo vytvořit nebo už existuje.
     if icon_for_build and icon_for_build.exists():
         cmd.extend(["--icon", str(icon_for_build)])
 
+    # Do buildu se přibalují všechny runtime assety a moduly potřebné pro aktualizace i generování klíčů.
     cmd.extend([
         "--hidden-import", "pirate_key_renderer",
         "--hidden-import", "update_manager",
@@ -344,8 +397,10 @@ def main() -> int:
         str(main_py),
     ])
 
+    # Samotné sestavení aplikace přes PyInstaller.
     run(cmd)
 
+    # Po buildu se ověří, že PyInstaller vytvořil očekávaný výstup pro aktuální platformu.
     if platform_key == "windows-x64":
         dist_payload = ROOT / "dist" / app_name
         exe_path = dist_payload / f"{app_name}.exe"
@@ -356,9 +411,11 @@ def main() -> int:
         if not dist_payload.exists():
             raise RuntimeError(f"macOS .app nebyl vytvoren: {dist_payload}")
 
+    # Release výstupy se ukládají odděleně podle verze a platformy.
     release_dir = ROOT / "release" / f"v {version}" / platform_key
     release_dir.mkdir(parents=True, exist_ok=True)
 
+    # Do release složky se ukládá i rozbalená aplikace pro rychlou ruční kontrolu.
     if platform_key == "windows-x64":
         release_app_dir = release_dir / app_name
         copytree_fresh(dist_payload, release_app_dir)
@@ -372,11 +429,13 @@ def main() -> int:
     zip_path = release_dir / zip_name
     log("\nVytvarim ZIP aktualizace...")
 
+    # Windows a macOS mají rozdílnou strukturu ZIPu kvůli rozdílnému způsobu instalace aktualizace.
     if platform_key == "windows-x64":
         zip_folder_contents(dist_payload, zip_path)
     else:
         zip_path_with_root(dist_payload, zip_path, dist_payload.name)
 
+    # ZIP se po vytvoření testovacím způsobem rozbalí a ověří se jeho očekávaná struktura.
     with tempfile.TemporaryDirectory(prefix="sifrator_zip_test_") as td:
         test_dir = Path(td)
         with zipfile.ZipFile(zip_path, "r") as zf:
@@ -389,12 +448,14 @@ def main() -> int:
             if not (test_dir / f"{app_name}.app").exists():
                 raise RuntimeError("ZIP je spatne zabaleny. Uvnitr neni .app balicek.")
 
+    # SHA256 slouží updateru k ověření integrity staženého balíčku před instalací.
     sha = sha256_file(zip_path)
     (release_dir / f"sha256_{platform_key}_v{version}.txt").write_text(sha, encoding="utf-8")
 
     tag_name = f"v{version}"
     package_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/download/{tag_name}/{zip_name}"
 
+    # update.json ukazuje na GitHub Release balíček a obsahuje hash pro kontrolu staženého ZIPu.
     update_data = write_platform_update_json(
         ROOT / "update.json",
         version=version,
@@ -428,6 +489,7 @@ def main() -> int:
     return 0
 
 
+# Standardní vstupní bod skriptu. Chyby se zapisují do logu a vrací se odpovídající návratový kód.
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
