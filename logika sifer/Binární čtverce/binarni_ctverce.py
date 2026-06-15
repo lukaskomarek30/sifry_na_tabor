@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Binární čtverce – logika šifrování a dešifrování.
+"""Implementace šifry Binární čtverce.
+
+Modul obsahuje kompletní logiku pro převod textu na binární čtverce
+a zpětné dešifrování do běžného textu. Součástí je také Qt widget,
+který zajišťuje grafické vykreslení výsledku přímo v aplikaci.
 
 Umístění v projektu:
     logika sifer/Binární čtverce/binarni_ctverce.py
 
-Pravidla:
-- A = 00001, B = 00010, ... Z = 11010.
-- 0 = prázdný čtvereček, 1 = plný čtvereček.
-- Čte se odspoda nahoru: poslední bit je nahoře.
-  Například A = 00001 -> plný čtverec nahoře.
-- Mezery a symboly jako ?, . , - ! zůstávají zachované.
-- Česká diakritika se převede na základní písmeno: Á -> A, Š -> S atd.
+Princip šifry:
+- písmena A–Z jsou mapována na 5bitový binární kód,
+- hodnota 1 se vykresluje jako plný čtverec,
+- hodnota 0 se vykresluje jako prázdný čtverec,
+- sloupec se čte odspoda nahoru, takže poslední bit je vizuálně nahoře,
+- česká diakritika se před šifrováním normalizuje na základní písmeno,
+- mezery a běžné symboly zůstávají ve výstupu zachované.
+
+Příklad:
+    A = 00001
+    Při vykreslení je poslední bit nahoře, takže horní čtverec je plný.
 """
 
 from __future__ import annotations
@@ -18,17 +26,20 @@ from __future__ import annotations
 import re
 import unicodedata
 
+# Základní vizuální symboly a podporovaná abeceda šifry.
 FILLED = "■"
 EMPTY = "□"
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+# Mapování písmen na 5bitový kód začíná od 1, aby A odpovídalo hodnotě 00001.
 LETTER_TO_BITS = {
     letter: format(index, "05b")
     for index, letter in enumerate(ALPHABET, start=1)
 }
+# Reverzní mapa se používá při dešifrování všech podporovaných vstupních formátů.
 BITS_TO_LETTER = {bits: letter for letter, bits in LETTER_TO_BITS.items()}
 
-# Některé české znaky se přes unicodedata nemusí vždy převést ideálně.
+# Explicitní převod českých znaků řeší případy, které samotné unicodedata nemusí normalizovat spolehlivě.
 CZECH_TRANSLATION = str.maketrans({
     "Á": "A", "Č": "C", "Ď": "D", "É": "E", "Ě": "E",
     "Í": "I", "Ň": "N", "Ó": "O", "Ř": "R", "Š": "S",
@@ -40,7 +51,7 @@ CZECH_TRANSLATION = str.maketrans({
 
 
 def _normalize_char(char: str) -> str:
-    """Vrátí znak bez diakritiky a velkým písmenem."""
+    """Normalizuje jeden vstupní znak na velké písmeno bez diakritiky."""
     if not char:
         return ""
 
@@ -54,10 +65,10 @@ def _normalize_char(char: str) -> str:
 
 
 def _bits_to_visual_column(bits: str) -> list[str]:
-    """Převede 5 bitů na 5 řádků čtverců.
+    """Převede validní 5bitový kód na vizuální sloupec čtverců.
 
-    Důležité: podle klíče se jede odspoda nahoru.
-    Proto se bity pro vykreslení otočí: poslední bit je nahoře.
+    Bitový zápis je uložen ve směru zdola nahoru, zatímco vykreslení probíhá
+    po řádcích shora dolů. Z toho důvodu se pořadí bitů před vykreslením obrací.
     """
     bits = bits.strip()
     if len(bits) != 5 or any(bit not in "01" for bit in bits):
@@ -67,7 +78,7 @@ def _bits_to_visual_column(bits: str) -> list[str]:
 
 
 def _visual_column_to_bits(column: list[str]) -> str | None:
-    """Převede 5 znaků čtverců zpět na 5 bitů."""
+    """Převede vizuální sloupec pěti čtverců zpět na původní 5bitový kód."""
     if len(column) != 5:
         return None
 
@@ -80,18 +91,18 @@ def _visual_column_to_bits(column: list[str]) -> str | None:
         else:
             return None
 
-    # Vykreslené je to nahoře -> dole, ale bitový kód je dole -> nahoře.
+    # Vizuální pořadí je shora dolů, proto se při převodu zpět obnoví původní směr bitů zdola nahoru.
     return "".join(reversed(normalized))
 
 
 def letter_to_bits(letter: str) -> str:
-    """Vrátí 5bitový kód písmene A-Z."""
+    """Vrátí 5bitový kód pro písmeno A–Z po normalizaci vstupu."""
     normalized = _normalize_char(letter)
     return LETTER_TO_BITS.get(normalized, "")
 
 
 def letter_to_visual_rows(letter: str) -> list[str]:
-    """Vrátí 5 řádků pro jedno písmeno."""
+    """Vrátí pět vizuálních řádků reprezentujících jedno zašifrované písmeno."""
     bits = letter_to_bits(letter)
     if not bits:
         return ["", "", "", "", ""]
@@ -99,14 +110,11 @@ def letter_to_visual_rows(letter: str) -> list[str]:
 
 
 def encrypt(text: str) -> str:
-    """Zašifruje text do Binárních čtverců.
+    """Zašifruje vstupní text do formátu Binárních čtverců.
 
-    Výstup je kreslený pomocí znaků:
-        ■ = plný čtverec
-        □ = prázdný čtverec
-
-    Symboly jako ?, . , - ! zůstávají symboly.
-    Mezery zůstávají jako větší mezera mezi slovy.
+    Písmena jsou převedena na svislé sloupce z pěti čtverců. Znaky mimo
+    podporovanou abecedu se ve výstupu ponechávají jako symboly, aby se
+    neztratila interpunkce ani struktura původní zprávy.
     """
     if text is None:
         return ""
@@ -120,7 +128,7 @@ def encrypt(text: str) -> str:
 
         for original_char in source_line:
             if original_char.isspace():
-                # Větší mezera mezi slovy. Při dešifrování se pozná jako mezera.
+                # Větší mezera odděluje slova a umožňuje jejich zpětnou rekonstrukci při dešifrování.
                 if has_content:
                     for row_index in range(5):
                         rows[row_index] += "     "
@@ -132,7 +140,7 @@ def encrypt(text: str) -> str:
             if normalized in LETTER_TO_BITS:
                 glyph_rows = _bits_to_visual_column(LETTER_TO_BITS[normalized])
             else:
-                # Symboly ponecháme jako symboly. Zobrazí se uprostřed výšky znaku.
+                # Nepodporované znaky se ponechávají jako symboly a zarovnávají se do středového řádku.
                 glyph_rows = [" ", " ", original_char, " ", " "]
 
             if need_separator:
@@ -151,7 +159,7 @@ def encrypt(text: str) -> str:
 
 
 def _decrypt_5bit_codes(text: str) -> str | None:
-    """Dešifruje zápis typu: 00001 01000 01111 01010."""
+    """Dešifruje čistý 5bitový textový zápis, například: 00001 01000 01111 01010."""
     if not re.search(r"[01]{5}", text):
         return None
 
@@ -179,14 +187,15 @@ def _decrypt_5bit_codes(text: str) -> str | None:
 
 
 def _decrypt_compact_squares(text: str) -> str | None:
-    """Dešifruje kompaktní zápis z 5 čtverečků vedle sebe.
+    """Dešifruje kompaktní jednořádkový zápis složený z pěti čtverců na znak.
 
-    Například: ■□□□□ □□□■□ ...
+    Příklad podporovaného formátu:
+        ■□□□□ □□□■□
     """
     if FILLED not in text and EMPTY not in text:
         return None
 
-    # Pokud text obsahuje více řádků, je pravděpodobnější plný kreslený formát.
+    # Více neprázdných řádků indikuje plný kreslený výstup, který zpracovává samostatný dekodér.
     non_empty_lines = [line for line in text.splitlines() if line.strip()]
     if len(non_empty_lines) >= 5:
         return None
@@ -212,7 +221,7 @@ def _decrypt_compact_squares(text: str) -> str | None:
 
 
 def _split_visual_blocks(text: str) -> list[list[str]]:
-    """Rozdělí kreslený výstup na bloky po 5 řádcích."""
+    """Rozdělí víceřádkový kreslený výstup na samostatné bloky po pěti řádcích."""
     lines = text.splitlines()
     blocks: list[list[str]] = []
     current: list[str] = []
@@ -236,7 +245,7 @@ def _split_visual_blocks(text: str) -> list[list[str]]:
 
 
 def _decrypt_visual(text: str) -> str | None:
-    """Dešifruje 5řádkový kreslený výstup z funkce encrypt()."""
+    """Dešifruje standardní pětřádkový kreslený výstup vytvořený funkcí encrypt()."""
     if FILLED not in text and EMPTY not in text and "█" not in text:
         return None
 
@@ -258,14 +267,14 @@ def _decrypt_visual(text: str) -> str | None:
         while x < width:
             column = [rows[row_index][x] for row_index in range(5)]
 
-            # Sloupec s písmenem.
+            # Sloupec představující běžné písmeno.
             bits = _visual_column_to_bits(column)
             if bits is not None:
                 output.append(BITS_TO_LETTER.get(bits, "?"))
                 x += 1
                 continue
 
-            # Sloupec se symbolem, například ? . , - !
+            # Sloupec obsahující původní symbol, například interpunkci.
             symbol_chars = [
                 char for char in column
                 if char.strip() and char not in (FILLED, EMPTY, "█", "■", "□")
@@ -275,8 +284,8 @@ def _decrypt_visual(text: str) -> str | None:
                 x += 1
                 continue
 
-            # Prázdný sloupec. Jeden prázdný sloupec je mezera mezi písmeny,
-            # více prázdných sloupců je mezera mezi slovy.
+            # Prázdné sloupce slouží jako oddělovače.
+            # Jeden prázdný sloupec odděluje znaky, širší mezera reprezentuje mezeru mezi slovy.
             gap_start = x
             while x < width:
                 gap_column = [rows[row_index][x] for row_index in range(5)]
@@ -299,12 +308,12 @@ def _decrypt_visual(text: str) -> str | None:
 
 
 def decrypt(text: str) -> str:
-    """Dešifruje Binární čtverce zpět na text.
+    """Dešifruje Binární čtverce zpět na běžný text.
 
-    Podporuje tři vstupy:
-    1) kreslený výstup z encrypt(),
-    2) 5bitové kódy typu 00001 01000 01111,
-    3) kompaktní čtverce typu ■□□□□ □□□■□.
+    Funkce automaticky rozpoznává tři podporované vstupní formáty:
+    1) pětřádkový kreslený výstup z encrypt(),
+    2) textové 5bitové kódy typu 00001 01000 01111,
+    3) kompaktní čtvercový zápis typu ■□□□□ □□□■□.
     """
     if text is None:
         return ""
@@ -313,6 +322,7 @@ def decrypt(text: str) -> str:
     if not source.strip():
         return ""
 
+    # Dekodéry se zkouší od nejkonkrétnějšího formátu po jednodušší textové varianty.
     for decoder in (_decrypt_visual, _decrypt_5bit_codes, _decrypt_compact_squares):
         decoded = decoder(source)
         if decoded is not None:
@@ -322,7 +332,7 @@ def decrypt(text: str) -> str:
 
 
 def get_key_data() -> dict:
-    """Vrátí data pro společný pirátský generátor klíčů."""
+    """Vrátí datovou strukturu pro společný generátor grafického klíče šifry."""
     return {
         "title": "Klíč šifry – Binární čtverce",
         "subtitle": "1 = plný čtvereček, 0 = prázdný čtvereček",
@@ -334,10 +344,11 @@ def get_key_data() -> dict:
 
 
 def get_key_table() -> dict[str, str]:
-    """Vrátí tabulku A-Z -> 5bitový kód."""
+    """Vrátí základní mapovací tabulku A–Z na odpovídající 5bitový kód."""
     return dict(LETTER_TO_BITS)
 
 
+# Jednoduchý ruční test modulu při samostatném spuštění souboru.
 if __name__ == "__main__":
     sample = "Ahoj jak se máš?"
     encrypted = encrypt(sample)
@@ -348,23 +359,24 @@ if __name__ == "__main__":
 
 
 # ============================================================
-# KRESLENÝ VÝSTUP PRO APLIKACI
+# Grafický Qt výstup pro aplikaci
 # ============================================================
 
 try:
     from PySide6.QtCore import Qt, QRect, QSize
     from PySide6.QtGui import QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import QWidget
-except Exception:  # aplikace bez PySide6 může dál používat encrypt/decrypt
+except Exception:  # Modul zůstává použitelný i bez PySide6; v takovém režimu funguje pouze textová logika encrypt/decrypt.
     QWidget = None
 
 
 if QWidget is not None:
     class BinarySquaresOutputWidget(QWidget):
-        """Kreslený výstup šifry Binární čtverce.
+        """Qt widget pro vizuální vykreslení šifry Binární čtverce.
 
-        Písmena jednoho slova na sebe navazují jako jedna mřížka.
-        Mezery mezi slovy jsou větší a symboly typu ?, . , - zůstávají symboly.
+        Widget vykresluje písmena jednoho slova jako souvislou mřížku,
+        mezi slovy používá větší mezery a nepodporované znaky zachovává
+        ve formě původních symbolů.
         """
 
         def __init__(self, parent=None):
@@ -376,8 +388,8 @@ if QWidget is not None:
             self._symbol_gap = 18
             self._line_gap = 36
             self.setMinimumSize(260, 150)
-            # V UI má být pozadí průhledné, aby sedělo do pirátského skinu.
-            # Bílé pozadí se přidává až v tisku v main.py.
+            # V aplikačním UI se widget vykresluje s průhledným pozadím, aby plynule navazoval na grafický skin.
+            # Bílé pozadí se doplňuje až při tisku nebo exportu v main.py.
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAutoFillBackground(False)
 
@@ -391,7 +403,7 @@ if QWidget is not None:
             self.update()
 
         def set_cipher_text(self, text: str) -> None:
-            # Main.py nám sem posílá původní text zprávy.
+            # main.py předává do widgetu původní text, nikoliv už hotový ASCII výstup.
             self.set_plain_text(text)
 
         def sizeHint(self) -> QSize:
@@ -421,7 +433,7 @@ if QWidget is not None:
             if current:
                 tokens.append(("word", current))
 
-            # Odstranit mezery na začátku/konci.
+            # Okrajové mezery se nebudou vykreslovat, protože by zbytečně posouvaly obsah výstupu.
             while tokens and tokens[0][0] == "space":
                 tokens.pop(0)
             while tokens and tokens[-1][0] == "space":
@@ -445,7 +457,7 @@ if QWidget is not None:
             for token in tokens:
                 token_w = self._token_width(token)
                 if token[0] == "space":
-                    # Mezera se nekreslí, jen odděluje další blok.
+                    # Mezera se nevykresluje jako znak; pouze zvětšuje horizontální odsazení dalšího bloku.
                     if line:
                         line.append(token)
                         x += token_w
@@ -479,8 +491,8 @@ if QWidget is not None:
             painter.setRenderHint(QPainter.Antialiasing, False)
             painter.setRenderHint(QPainter.TextAntialiasing, True)
 
-            # Pozadí zde záměrně nekreslíme – v UI je průhledné.
-            # Tisk si bílé pozadí doplní v main.py při převodu obrázku.
+            # Pozadí se zde záměrně nekreslí, protože widget má být v UI transparentní.
+            # Export nebo tisk si podklad doplní samostatně v hlavním aplikačním modulu.
 
             cell = self._cell
             line_h = cell * 5
