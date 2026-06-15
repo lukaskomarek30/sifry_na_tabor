@@ -1,0 +1,97 @@
+name: Build release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Verze bez pismene v, napr. 0.0.1"
+        required: true
+        default: "0.0.1"
+      upload_to_release:
+        description: "Nahrat ZIPy do GitHub Release"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+
+          - platform: macos-arm64
+            os: macos-26
+
+          - platform: macos-x64
+            os: macos-26-intel
+
+    steps:
+      - name: Stahnout repozitar
+        uses: actions/checkout@v6
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Zobrazit system
+        shell: bash
+        run: |
+          echo "Platforma: ${{ matrix.platform }}"
+          python --version
+          python -c "import platform; print(platform.system(), platform.machine())"
+
+      - name: Nainstalovat knihovny
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller PySide6 Pillow
+
+      - name: Spustit build_release.py
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          printf "%s\n" "$VERSION" | python build_release.py
+
+      - name: Najit vytvorene ZIPy
+        shell: bash
+        run: |
+          echo "Vytvorene soubory:"
+          find release -type f || true
+
+      - name: Ulozit build jako artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifrator_Mraveniste_${{ matrix.platform }}_v${{ inputs.version }}
+          path: |
+            release/**/*.zip
+            release/**/update.json
+            release/**/*.txt
+          if-no-files-found: error
+
+      - name: Nahrat ZIP do GitHub Release
+        if: ${{ inputs.upload_to_release == true }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Nova verze $VERSION."
+          fi
+
+          gh release upload "$TAG" release/**/*.zip --clobber
