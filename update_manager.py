@@ -1,11 +1,17 @@
-"""Správce aktualizací pro Šifrátor Mraveniště s průběhem aktualizace.
+"""Správa aktualizací aplikace Šifrátor Mraveniště.
 
-Verze upravená pro více platforem:
-- Windows x64
-- macOS Apple Silicon (arm64)
-- macOS Intel (x64)
+Modul řeší kompletní aktualizační proces aplikace:
+- kontrolu dostupné verze přes update.json,
+- výběr správného instalačního balíčku podle platformy,
+- stažení a kontrolu ZIP balíčku,
+- instalaci aktualizace se zobrazením průběhu.
 
-Podporuje nový update.json ve tvaru:
+Podporované platformy:
+- Windows x64,
+- macOS Apple Silicon (arm64),
+- macOS Intel (x64).
+
+Preferovaný formát update.json:
 {
   "version": "0.0.3",
   "notes": "...",
@@ -16,7 +22,8 @@ Podporuje nový update.json ve tvaru:
   }
 }
 
-Zpětně podporuje i starý formát s package_url a sha256 v kořeni JSONu.
+Z důvodu zpětné kompatibility je podporovaný také starší formát,
+kde jsou hodnoty package_url a sha256 uložené přímo v kořeni JSONu.
 """
 
 from __future__ import annotations
@@ -49,7 +56,7 @@ class UpdateCancelled(UpdateError):
 
 
 def parse_version(version: str) -> tuple[int, ...]:
-    """Převede verzi typu 1.2.3 nebo v1.2.3 na tuple pro porovnání."""
+    """Normalizuje textovou verzi do číselné podoby vhodné pro porovnání."""
     value = (version or "").strip().lower().replace("v", "")
     parts: list[int] = []
     for part in value.split("."):
@@ -68,7 +75,7 @@ def is_newer_version(remote_version: str, current_version: str) -> bool:
 
 
 def get_platform_key() -> str:
-    """Vrátí klíč platformy používaný v update.json."""
+    """Vrátí identifikátor platformy používaný v update.json."""
     system = platform.system().lower()
     machine = platform.machine().lower()
 
@@ -91,11 +98,11 @@ def get_platform_key() -> str:
 
 
 def get_app_dir() -> str:
-    """Vrátí složku, ve které běží aplikace.
+    """Vrátí pracovní složku aktuálně spuštěné aplikace.
 
-    Na Windows je to složka s EXE.
-    Na macOS uvnitř .app je to typicky .../Sifrator_Mraveniste.app/Contents/MacOS.
-    Pro samotnou instalaci aktualizace používáme get_update_target_path().
+    U sestavené aplikace se používá cesta ke spuštěnému binárnímu souboru.
+    Při spuštění ze zdrojového kódu se používá složka tohoto modulu.
+    Cílová cesta pro samotnou aktualizaci se řeší samostatně pomocí get_update_target_path().
     """
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -109,7 +116,7 @@ def get_current_run_path() -> str:
 
 
 def get_macos_app_bundle_path() -> str:
-    """Najde kořen .app balíčku, pokud aplikace běží z macOS .app."""
+    """Vrátí kořenový adresář macOS .app balíčku, pokud je aplikace spuštěná z bundle."""
     run_path = os.path.abspath(get_current_run_path())
     parts = run_path.split(os.sep)
 
@@ -121,7 +128,7 @@ def get_macos_app_bundle_path() -> str:
 
 
 def get_update_target_path() -> str:
-    """Vrátí cestu, která se má při aktualizaci zrcadlově přepsat."""
+    """Vrátí cílovou cestu, do které se má nainstalovat nová verze aplikace."""
     if platform.system().lower() == "darwin":
         app_bundle = get_macos_app_bundle_path()
         if app_bundle:
@@ -187,10 +194,11 @@ def sha256_file(path: str, progress_callback: ProgressCallback | None = None) ->
 
 
 def _select_platform_data(update_json: dict) -> dict | None:
-    """Vybere správný balíček z update.json podle aktuálního systému.
+    """Vybere metadata aktualizačního balíčku odpovídající aktuální platformě.
 
-    Vrací kopii JSONu doplněnou o package_url, sha256 a platform_key.
-    Díky tomu zbytek aplikace může zůstat podobný původní Windows verzi.
+    Funkce vrací kopii vstupního JSONu rozšířenou o package_url, sha256,
+    file_name a platform_key. Navazující část aktualizačního procesu tak může
+    pracovat se sjednocenou strukturou bez ohledu na původní formát update.json.
     """
     if not isinstance(update_json, dict):
         return None
@@ -202,12 +210,12 @@ def _select_platform_data(update_json: dict) -> dict | None:
     platform_key = get_platform_key()
     platforms = update_json.get("platforms")
 
-    # Nový formát.
+    # Preferovaný formát s oddělenými balíčky pro jednotlivé platformy.
     if isinstance(platforms, dict):
         selected = platforms.get(platform_key)
 
-        # Když běží Intel Mac, ale existuje jen macos-x64.
-        # Když běží Apple Silicon, vyžaduje se macos-arm64.
+        # Platforma musí mít v update.json vlastní konfigurační blok.
+        # Tím se zabrání instalaci nesprávného balíčku pro jinou architekturu.
         if not isinstance(selected, dict):
             return None
 
@@ -222,7 +230,7 @@ def _select_platform_data(update_json: dict) -> dict | None:
         result["file_name"] = str(selected.get("file_name", "")).strip()
         return result
 
-    # Starý formát – kvůli kompatibilitě s původním update.json.
+    # Starší formát se zpracuje kvůli zachování kompatibility s původními releasy.
     package_url = str(update_json.get("package_url", "")).strip()
     if package_url:
         result = dict(update_json)
@@ -234,7 +242,7 @@ def _select_platform_data(update_json: dict) -> dict | None:
 
 
 def check_for_update(current_version: str) -> dict | None:
-    """Vrátí data aktualizace pro aktuální platformu, pokud existuje novější verze."""
+    """Zkontroluje dostupnost nové verze a vrátí metadata aktualizace pro aktuální platformu."""
     try:
         raw_json = download_text(UPDATE_JSON_URL)
         data = json.loads(raw_json)
@@ -287,9 +295,9 @@ def download_update_package(update_data: dict, progress_callback: ProgressCallba
 
 
 def _find_payload_dir(extract_dir: str) -> str:
-    """Najde skutečnou složku s aplikací uvnitř rozbaleného ZIPu.
+    """Vyhledá adresář s obsahem aplikace uvnitř rozbaleného aktualizačního balíčku.
 
-    Podporuje ZIP, kde jsou soubory rovnou v kořeni, i ZIP s jednou podsložkou.
+    Podporuje balíček se soubory přímo v kořeni i balíček zabalený do jedné hlavní složky.
     """
     items = [os.path.join(extract_dir, name) for name in os.listdir(extract_dir)]
     dirs = [path for path in items if os.path.isdir(path)]
@@ -305,7 +313,7 @@ def _find_payload_dir(extract_dir: str) -> str:
 
 
 def _find_macos_app_payload(extract_dir: str, target_path: str) -> str:
-    """Najde .app balíček v rozbalené aktualizaci."""
+    """Vyhledá macOS .app bundle v rozbaleném aktualizačním balíčku."""
     target_name = os.path.basename(target_path.rstrip(os.sep))
 
     app_dirs: list[str] = []
@@ -564,7 +572,7 @@ def install_update_package(zip_path: str, target_path: str, run_file_name: str =
 
 
 class _QtProgress:
-    """Malé okno s progress barem pro aktualizaci."""
+    """Jednoduché modální okno zobrazující průběh aktualizace."""
 
     def __init__(self) -> None:
         self.dialog = None
@@ -612,9 +620,9 @@ class _QtProgress:
 
 
 def download_and_install_update(update_data: dict) -> None:
-    """Stáhne a nainstaluje aktualizaci se zobrazením průběhu.
+    """Stáhne a nainstaluje aktualizační balíček se zobrazením průběhu.
 
-    Rozhraní zůstává stejné jako v původním main.py:
+    Veřejné rozhraní funkce zůstává kompatibilní s voláním z main.py:
         update_manager.download_and_install_update(update_data)
     """
     progress = _QtProgress()
