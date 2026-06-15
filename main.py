@@ -33,28 +33,25 @@ except Exception:
 
 import update_manager
 
+# Aktualizační modul je importovaný samostatně, aby bylo možné udržovat
+# kontrolu nových verzí odděleně od hlavní logiky uživatelského rozhraní.
+
 
 # ============================================================
-# ŠIFRÁTOR MRAVENIŠTĚ – UI skin přes icons/BG.png
+# ŠIFRÁTOR MRAVENIŠTĚ – hlavní okno aplikace
 #
-# Očekávaná struktura:
+# Modul řeší kompletní uživatelské rozhraní aplikace, načítání
+# externích modulů jednotlivých šifer, vykreslování textových i
+# grafických výstupů, tisk a napojení na aktualizační mechanismus.
 #
-# C:\Users\komarek\Desktop\Šifry\
-# ├── main.py
-# └── icons\
-#     ├── BG.png                    <- čistý UI skin / pozadí
-#     ├── logo.png
-#     ├── binarni_ctverce.png
-#     ├── brailovo_pismo.png
-#     ├── ...
-#     ├── lock_closed.png
-#     └── lock_open.png
+# Grafické rozhraní je postavené nad hotovým skinem icons/BG.png.
+# QPainter se používá pouze pro funkční a dynamické prvky, nikoli
+# pro překreslování statického pozadí aplikace.
 #
-# DŮLEŽITÉ:
-# Tato verze už nekreslí modré rámečky přes QPainter.
-# Bere čisté BG.png jako hotový grafický skin a přes něj
-# pokládá jen funkční prvky: logo, seznam šifer, textová pole,
-# tlačítka a status.
+# Podporované režimy spuštění:
+# - vývojové spuštění přímo z Pythonu,
+# - Windows onedir build vytvořený přes PyInstaller,
+# - macOS .app balíček vytvořený přes PyInstaller.
 # ============================================================
 
 
@@ -64,15 +61,12 @@ BASE_H = 941
 
 
 def get_app_dir():
-    """Vrátí složku aplikace.
+    """Vrátí kořenovou složku běžící aplikace.
 
-    Při spuštění z Pythonu:
-        složka, kde leží main.py
-
-    Při spuštění z EXE:
-        složka, kde leží Sifrator_Mraveniste.exe
-
-    Díky tomu hotová aplikace hledá složku icons vedle EXE.
+    Ve vývojovém režimu se používá adresář s main.py.
+    U sestavené aplikace se používá adresář se spustitelným souborem.
+    Díky tomu lze assety a podpůrné soubory hledat stejným způsobem
+    ve vývoji i v produkčním buildu.
     """
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -81,20 +75,20 @@ def get_app_dir():
 
 
 def get_script_dir():
-    """Vrátí složku skriptu main.py."""
+    """Vrátí adresář zdrojového souboru main.py."""
     return os.path.dirname(os.path.abspath(__file__))
 
 
 def get_pyinstaller_bundle_dir():
-    """Vrátí dočasnou složku PyInstalleru, pokud aplikace běží jako EXE."""
+    """Vrátí interní dočasný adresář PyInstaller bundlu, pokud je dostupný."""
     return getattr(sys, "_MEIPASS", "")
 
 
 def get_icons_dir():
-    """Najde složku icons.
+    """Vyhledá adresář s grafickými prostředky aplikace.
 
-    Hledá vedle EXE/main.py, ve složce PyInstalleru a na macOS také
-    v Contents/Resources uvnitř .app balíčku.
+    Pořadí kandidátů pokrývá vývojové spuštění, Windows build,
+    PyInstaller bundle i macOS .app strukturu s adresářem Resources.
     """
     candidates = [
         os.path.join(get_app_dir(), "icons"),
@@ -105,7 +99,7 @@ def get_icons_dir():
     if bundle_dir:
         candidates.append(os.path.join(bundle_dir, "icons"))
 
-    # macOS .app: .../Sifrator_Mraveniste.app/Contents/MacOS -> .../Contents/Resources
+    # macOS .app používá standardní strukturu Contents/MacOS -> Contents/Resources.
     if getattr(sys, "frozen", False) and sys.platform == "darwin":
         macos_dir = os.path.dirname(sys.executable)
         contents_dir = os.path.dirname(macos_dir)
@@ -120,7 +114,7 @@ def get_icons_dir():
 
 
 def load_python_module_from_path(module_name: str, file_path: str):
-    """Načte Python soubor i ze složky, která má v názvu mezeru nebo diakritiku."""
+    """Dynamicky načte Python modul z konkrétní cesty v souborovém systému."""
     if not os.path.exists(file_path):
         return None
 
@@ -138,12 +132,10 @@ def load_python_module_from_path(module_name: str, file_path: str):
 
 
 def get_cipher_logic_file(*parts):
-    """Vrátí cestu k souboru v logika sifer/...
+    """Vrátí cestu k souboru v adresáři logika sifer.
 
-    Podporuje:
-    - vývojové spuštění z Pythonu,
-    - Windows onedir build,
-    - macOS .app build přes PyInstaller.
+    Funkce sjednocuje hledání modulů šifer napříč vývojovým režimem,
+    Windows onedir buildem a macOS .app balíčkem.
     """
     candidates = [
         os.path.join(get_app_dir(), "logika sifer", *parts),
@@ -167,7 +159,7 @@ def get_cipher_logic_file(*parts):
 
 
 def get_morse_logic_module():
-    """Načte logiku z: logika sifer/Morseova abeceda/morseova_abeceda.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Morseova abeceda/morseova_abeceda.py"""
     logic_file = get_cipher_logic_file("Morseova abeceda", "morseova_abeceda.py")
     return load_python_module_from_path("morseova_abeceda_logic", logic_file)
 
@@ -186,7 +178,7 @@ def get_morse_logic():
 
 
 def get_binary_squares_logic_module():
-    """Načte logiku z: logika sifer/Binární čtverce/binarni_ctverce.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Binární čtverce/binarni_ctverce.py"""
     logic_file = get_cipher_logic_file("Binární čtverce", "binarni_ctverce.py")
     return load_python_module_from_path("binarni_ctverce_logic", logic_file)
 
@@ -195,7 +187,7 @@ BINARY_SQUARES_LOGIC = None
 
 
 def get_binary_squares_logic():
-    """Lazy načtení logiky Binárních čtverců."""
+    """Odloženě načte logiku Binárních čtverců až při prvním použití."""
     global BINARY_SQUARES_LOGIC
 
     if BINARY_SQUARES_LOGIC is None:
@@ -205,7 +197,7 @@ def get_binary_squares_logic():
 
 
 def get_braille_logic_module():
-    """Načte logiku z: logika sifer/Brailovo písmo/brailovo_pismo.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Brailovo písmo/brailovo_pismo.py"""
     logic_file = get_cipher_logic_file("Brailovo písmo", "brailovo_pismo.py")
     return load_python_module_from_path("brailovo_pismo_logic", logic_file)
 
@@ -214,7 +206,7 @@ BRAILLE_LOGIC = None
 
 
 def get_braille_logic():
-    """Lazy načtení logiky Braillova písma."""
+    """Odloženě načte logiku Braillova písma až při prvním použití."""
     global BRAILLE_LOGIC
 
     if BRAILLE_LOGIC is None:
@@ -224,7 +216,7 @@ def get_braille_logic():
 
 
 def get_british_flag_logic_module():
-    """Načte logiku z: logika sifer/Britská vlajka/britska_vlajka.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Britská vlajka/britska_vlajka.py"""
     logic_file = get_cipher_logic_file("Britská vlajka", "britska_vlajka.py")
     return load_python_module_from_path("britska_vlajka_logic", logic_file)
 
@@ -233,7 +225,7 @@ BRITISH_FLAG_LOGIC = None
 
 
 def get_british_flag_logic():
-    """Lazy načtení logiky a kreslicího widgetu Britské vlajky."""
+    """Odloženě načte logiku a vykreslovacího widgetu Britské vlajky až při prvním použití."""
     global BRITISH_FLAG_LOGIC
 
     if BRITISH_FLAG_LOGIC is None:
@@ -243,7 +235,7 @@ def get_british_flag_logic():
 
 
 def get_british_flag_widget_class():
-    """Vrátí třídu BritishFlagOutputWidget z externího souboru britska_vlajka.py."""
+    """Vrátí třídu BritishFlagOutputWidget načtenou z externího modulu britska_vlajka.py."""
     module = get_british_flag_logic()
 
     if module is None:
@@ -253,7 +245,7 @@ def get_british_flag_widget_class():
 
 
 def get_ctverec_logic_module():
-    """Načte logiku z: logika sifer/Čtverec/ctverec.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Čtverec/ctverec.py"""
     logic_file = get_cipher_logic_file("Čtverec", "ctverec.py")
     return load_python_module_from_path("ctverec_logic", logic_file)
 
@@ -262,7 +254,7 @@ CTVEREC_LOGIC = None
 
 
 def get_ctverec_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Čtverec."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Čtverec až při prvním použití."""
     global CTVEREC_LOGIC
 
     if CTVEREC_LOGIC is None:
@@ -272,7 +264,7 @@ def get_ctverec_logic():
 
 
 def get_ctverec_widget_class():
-    """Vrátí třídu CtverecOutputWidget z externího souboru ctverec.py."""
+    """Vrátí třídu CtverecOutputWidget načtenou z externího modulu ctverec.py."""
     module = get_ctverec_logic()
 
     if module is None:
@@ -282,7 +274,7 @@ def get_ctverec_widget_class():
 
 
 def get_hebrew_cross_logic_module():
-    """Načte logiku z: logika sifer/Hebrejský kříž/hebrejsky_kriz.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Hebrejský kříž/hebrejsky_kriz.py"""
     logic_file = get_cipher_logic_file("Hebrejský kříž", "hebrejsky_kriz.py")
     return load_python_module_from_path("hebrejsky_kriz_logic", logic_file)
 
@@ -291,7 +283,7 @@ HEBREW_CROSS_LOGIC = None
 
 
 def get_hebrew_cross_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Hebrejský kříž."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Hebrejský kříž až při prvním použití."""
     global HEBREW_CROSS_LOGIC
 
     if HEBREW_CROSS_LOGIC is None:
@@ -301,7 +293,7 @@ def get_hebrew_cross_logic():
 
 
 def get_hebrew_cross_widget_class():
-    """Vrátí třídu HebrejskyKrizOutputWidget z externího souboru hebrejsky_kriz.py."""
+    """Vrátí třídu HebrejskyKrizOutputWidget načtenou z externího modulu hebrejsky_kriz.py."""
     module = get_hebrew_cross_logic()
 
     if module is None:
@@ -311,7 +303,7 @@ def get_hebrew_cross_widget_class():
 
 
 def get_small_polish_cross_logic_module():
-    """Načte logiku z: logika sifer/Malý polský kříž/maly_polsky_kriz.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Malý polský kříž/maly_polsky_kriz.py"""
     logic_file = get_cipher_logic_file("Malý polský kříž", "maly_polsky_kriz.py")
     return load_python_module_from_path("maly_polsky_kriz_logic", logic_file)
 
@@ -320,7 +312,7 @@ SMALL_POLISH_CROSS_LOGIC = None
 
 
 def get_small_polish_cross_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Malý polský kříž."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Malý polský kříž až při prvním použití."""
     global SMALL_POLISH_CROSS_LOGIC
 
     if SMALL_POLISH_CROSS_LOGIC is None:
@@ -330,7 +322,7 @@ def get_small_polish_cross_logic():
 
 
 def get_small_polish_cross_widget_class():
-    """Vrátí třídu MalyPolskyKrizOutputWidget z externího souboru maly_polsky_kriz.py."""
+    """Vrátí třídu MalyPolskyKrizOutputWidget načtenou z externího modulu maly_polsky_kriz.py."""
     module = get_small_polish_cross_logic()
 
     if module is None:
@@ -340,7 +332,7 @@ def get_small_polish_cross_widget_class():
 
 
 def get_mobile_logic_module():
-    """Načte logiku z: logika sifer/Mobil/mobil.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Mobil/mobil.py"""
     logic_file = get_cipher_logic_file("Mobil", "mobil.py")
     return load_python_module_from_path("mobil_logic", logic_file)
 
@@ -349,7 +341,7 @@ MOBILE_LOGIC = None
 
 
 def get_mobile_logic():
-    """Lazy načtení logiky šifry Mobil."""
+    """Odloženě načte logiku šifry Mobil až při prvním použití."""
     global MOBILE_LOGIC
 
     if MOBILE_LOGIC is None:
@@ -359,7 +351,7 @@ def get_mobile_logic():
 
 
 def get_moon_logic_module():
-    """Načte logiku z: logika sifer/Moonovo písmo/moonovo_pismo.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Moonovo písmo/moonovo_pismo.py"""
     logic_file = get_cipher_logic_file("Moonovo písmo", "moonovo_pismo.py")
     return load_python_module_from_path("moonovo_pismo_logic", logic_file)
 
@@ -368,7 +360,7 @@ MOON_LOGIC = None
 
 
 def get_moon_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Moonovo písmo."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Moonovo písmo až při prvním použití."""
     global MOON_LOGIC
 
     if MOON_LOGIC is None:
@@ -378,7 +370,7 @@ def get_moon_logic():
 
 
 def get_moon_widget_class():
-    """Vrátí třídu MoonovoPismoOutputWidget z externího souboru moonovo_pismo.py."""
+    """Vrátí třídu MoonovoPismoOutputWidget načtenou z externího modulu moonovo_pismo.py."""
     module = get_moon_logic()
 
     if module is None:
@@ -388,7 +380,7 @@ def get_moon_widget_class():
 
 
 def get_morse_hory_logic_module():
-    """Načte logiku z: logika sifer/Morseova abeceda – hory/morseova_abeceda_hory.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Morseova abeceda – hory/morseova_abeceda_hory.py"""
     logic_file = get_cipher_logic_file("Morseova abeceda – hory", "morseova_abeceda_hory.py")
     return load_python_module_from_path("morseova_abeceda_hory_logic", logic_file)
 
@@ -397,7 +389,7 @@ MORSE_HORY_LOGIC = None
 
 
 def get_morse_hory_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Morseova abeceda – hory."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Morseova abeceda – hory až při prvním použití."""
     global MORSE_HORY_LOGIC
 
     if MORSE_HORY_LOGIC is None:
@@ -407,7 +399,7 @@ def get_morse_hory_logic():
 
 
 def get_morse_hory_widget_class():
-    """Vrátí třídu MorseHoryOutputWidget z externího souboru morseova_abeceda_hory.py."""
+    """Vrátí třídu MorseHoryOutputWidget načtenou z externího modulu morseova_abeceda_hory.py."""
     module = get_morse_hory_logic()
 
     if module is None:
@@ -417,7 +409,7 @@ def get_morse_hory_widget_class():
 
 
 def get_morse_pila_logic_module():
-    """Načte logiku z: logika sifer/Morseova abeceda – pila/morseova_abeceda_pila.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Morseova abeceda – pila/morseova_abeceda_pila.py"""
     logic_file = get_cipher_logic_file("Morseova abeceda – pila", "morseova_abeceda_pila.py")
     return load_python_module_from_path("morseova_abeceda_pila_logic", logic_file)
 
@@ -426,7 +418,7 @@ MORSE_PILA_LOGIC = None
 
 
 def get_morse_pila_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Morseova abeceda – pila."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Morseova abeceda – pila až při prvním použití."""
     global MORSE_PILA_LOGIC
 
     if MORSE_PILA_LOGIC is None:
@@ -436,7 +428,7 @@ def get_morse_pila_logic():
 
 
 def get_morse_pila_widget_class():
-    """Vrátí třídu MorsePilaOutputWidget z externího souboru morseova_abeceda_pila.py."""
+    """Vrátí třídu MorsePilaOutputWidget načtenou z externího modulu morseova_abeceda_pila.py."""
     module = get_morse_pila_logic()
 
     if module is None:
@@ -446,7 +438,7 @@ def get_morse_pila_widget_class():
 
 
 def get_morse_stromy_logic_module():
-    """Načte logiku z: logika sifer/Morseova abeceda – stromy/morseova_abeceda_stromy.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Morseova abeceda – stromy/morseova_abeceda_stromy.py"""
     logic_file = get_cipher_logic_file("Morseova abeceda – stromy", "morseova_abeceda_stromy.py")
     return load_python_module_from_path("morseova_abeceda_stromy_logic", logic_file)
 
@@ -455,7 +447,7 @@ MORSE_STROMY_LOGIC = None
 
 
 def get_morse_stromy_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Morseova abeceda – stromy."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Morseova abeceda – stromy až při prvním použití."""
     global MORSE_STROMY_LOGIC
 
     if MORSE_STROMY_LOGIC is None:
@@ -465,7 +457,7 @@ def get_morse_stromy_logic():
 
 
 def get_morse_stromy_widget_class():
-    """Vrátí třídu MorseStromyOutputWidget z externího souboru morseova_abeceda_stromy.py."""
+    """Vrátí třídu MorseStromyOutputWidget načtenou z externího modulu morseova_abeceda_stromy.py."""
     module = get_morse_stromy_logic()
 
     if module is None:
@@ -475,7 +467,7 @@ def get_morse_stromy_widget_class():
 
 
 def get_mriz_logic_module():
-    """Načte logiku z: logika sifer/Mříž/mriz.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Mříž/mriz.py"""
     logic_file = get_cipher_logic_file("Mříž", "mriz.py")
     return load_python_module_from_path("mriz_logic", logic_file)
 
@@ -484,7 +476,7 @@ MRIZ_LOGIC = None
 
 
 def get_mriz_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Mříž."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Mříž až při prvním použití."""
     global MRIZ_LOGIC
 
     if MRIZ_LOGIC is None:
@@ -494,7 +486,7 @@ def get_mriz_logic():
 
 
 def get_mriz_widget_class():
-    """Vrátí třídu MrizOutputWidget z externího souboru mriz.py."""
+    """Vrátí třídu MrizOutputWidget načtenou z externího modulu mriz.py."""
     module = get_mriz_logic()
 
     if module is None:
@@ -504,7 +496,7 @@ def get_mriz_widget_class():
 
 
 def get_okno_logic_module():
-    """Načte logiku z: logika sifer/Okno/okno.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Okno/okno.py"""
     logic_file = get_cipher_logic_file("Okno", "okno.py")
     return load_python_module_from_path("okno_logic", logic_file)
 
@@ -513,7 +505,7 @@ OKNO_LOGIC = None
 
 
 def get_okno_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Okno."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Okno až při prvním použití."""
     global OKNO_LOGIC
 
     if OKNO_LOGIC is None:
@@ -523,7 +515,7 @@ def get_okno_logic():
 
 
 def get_okno_widget_class():
-    """Vrátí třídu OknoOutputWidget z externího souboru okno.py."""
+    """Vrátí třídu OknoOutputWidget načtenou z externího modulu okno.py."""
     module = get_okno_logic()
 
     if module is None:
@@ -533,7 +525,7 @@ def get_okno_widget_class():
 
 
 def get_pavouci_sit_logic_module():
-    """Načte logiku z: logika sifer/Pavoučí síť/pavouci_sit.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Pavoučí síť/pavouci_sit.py"""
     logic_file = get_cipher_logic_file("Pavoučí síť", "pavouci_sit.py")
     return load_python_module_from_path("pavouci_sit_logic", logic_file)
 
@@ -542,7 +534,7 @@ PAVOUCI_SIT_LOGIC = None
 
 
 def get_pavouci_sit_logic():
-    """Lazy načtení logiky šifry Pavoučí síť."""
+    """Odloženě načte logiku šifry Pavoučí síť až při prvním použití."""
     global PAVOUCI_SIT_LOGIC
 
     if PAVOUCI_SIT_LOGIC is None:
@@ -552,7 +544,7 @@ def get_pavouci_sit_logic():
 
 
 def get_posunkova_abeceda_logic_module():
-    """Načte logiku z: logika sifer/Posunková abeceda/posunkova_abeceda.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Posunková abeceda/posunkova_abeceda.py"""
     logic_file = get_cipher_logic_file("Posunková abeceda", "posunkova_abeceda.py")
     return load_python_module_from_path("posunkova_abeceda_logic", logic_file)
 
@@ -561,7 +553,7 @@ POSUNKOVA_ABECEDA_LOGIC = None
 
 
 def get_posunkova_abeceda_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Posunková abeceda."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Posunková abeceda až při prvním použití."""
     global POSUNKOVA_ABECEDA_LOGIC
 
     if POSUNKOVA_ABECEDA_LOGIC is None:
@@ -571,7 +563,7 @@ def get_posunkova_abeceda_logic():
 
 
 def get_posunkova_abeceda_widget_class():
-    """Vrátí třídu PosunkovaAbecedaOutputWidget z externího souboru posunkova_abeceda.py."""
+    """Vrátí třídu PosunkovaAbecedaOutputWidget načtenou z externího modulu posunkova_abeceda.py."""
     module = get_posunkova_abeceda_logic()
 
     if module is None:
@@ -581,7 +573,7 @@ def get_posunkova_abeceda_widget_class():
 
 
 def get_pseudo_cina_logic_module():
-    """Načte logiku z: logika sifer/Pseudo-Čína/pseudo_cina.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Pseudo-Čína/pseudo_cina.py"""
     logic_file = get_cipher_logic_file("Pseudo-Čína", "pseudo_cina.py")
     return load_python_module_from_path("pseudo_cina_logic", logic_file)
 
@@ -590,7 +582,7 @@ PSEUDO_CINA_LOGIC = None
 
 
 def get_pseudo_cina_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Pseudo-Čína."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Pseudo-Čína až při prvním použití."""
     global PSEUDO_CINA_LOGIC
 
     if PSEUDO_CINA_LOGIC is None:
@@ -600,7 +592,7 @@ def get_pseudo_cina_logic():
 
 
 def get_pseudo_cina_widget_class():
-    """Vrátí třídu PseudoCinaOutputWidget z externího souboru pseudo_cina.py."""
+    """Vrátí třídu PseudoCinaOutputWidget načtenou z externího modulu pseudo_cina.py."""
     module = get_pseudo_cina_logic()
 
     if module is None:
@@ -610,7 +602,7 @@ def get_pseudo_cina_widget_class():
 
 
 def get_semafor_logic_module():
-    """Načte logiku z: logika sifer/Semafor/semafor.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Semafor/semafor.py"""
     logic_file = get_cipher_logic_file("Semafor", "semafor.py")
     return load_python_module_from_path("semafor_logic", logic_file)
 
@@ -619,7 +611,7 @@ SEMAFOR_LOGIC = None
 
 
 def get_semafor_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Semafor."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Semafor až při prvním použití."""
     global SEMAFOR_LOGIC
 
     if SEMAFOR_LOGIC is None:
@@ -629,7 +621,7 @@ def get_semafor_logic():
 
 
 def get_semafor_widget_class():
-    """Vrátí třídu SemaforOutputWidget z externího souboru semafor.py."""
+    """Vrátí třídu SemaforOutputWidget načtenou z externího modulu semafor.py."""
     module = get_semafor_logic()
 
     if module is None:
@@ -639,7 +631,7 @@ def get_semafor_widget_class():
 
 
 def get_superkrychle_logic_module():
-    """Načte logiku z: logika sifer/SuperKrychle/superkrychle.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/SuperKrychle/superkrychle.py"""
     logic_file = get_cipher_logic_file("SuperKrychle", "superkrychle.py")
     return load_python_module_from_path("superkrychle_logic", logic_file)
 
@@ -648,7 +640,7 @@ SUPERKRYCHLE_LOGIC = None
 
 
 def get_superkrychle_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry SuperKrychle."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry SuperKrychle až při prvním použití."""
     global SUPERKRYCHLE_LOGIC
 
     if SUPERKRYCHLE_LOGIC is None:
@@ -658,7 +650,7 @@ def get_superkrychle_logic():
 
 
 def get_superkrychle_widget_class():
-    """Vrátí třídu SuperKrychleOutputWidget z externího souboru superkrychle.py."""
+    """Vrátí třídu SuperKrychleOutputWidget načtenou z externího modulu superkrychle.py."""
     module = get_superkrychle_logic()
 
     if module is None:
@@ -668,7 +660,7 @@ def get_superkrychle_widget_class():
 
 
 def get_tancici_figurky_logic_module():
-    """Načte logiku z: logika sifer/Tančící figurky/tancici_figurky.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Tančící figurky/tancici_figurky.py"""
     logic_file = get_cipher_logic_file("Tančící figurky", "tancici_figurky.py")
     return load_python_module_from_path("tancici_figurky_logic", logic_file)
 
@@ -677,7 +669,7 @@ TANCICI_FIGURKY_LOGIC = None
 
 
 def get_tancici_figurky_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Tančící figurky."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Tančící figurky až při prvním použití."""
     global TANCICI_FIGURKY_LOGIC
 
     if TANCICI_FIGURKY_LOGIC is None:
@@ -687,7 +679,7 @@ def get_tancici_figurky_logic():
 
 
 def get_tancici_figurky_widget_class():
-    """Vrátí třídu TanciciFigurkyOutputWidget z externího souboru tancici_figurky.py."""
+    """Vrátí třídu TanciciFigurkyOutputWidget načtenou z externího modulu tancici_figurky.py."""
     module = get_tancici_figurky_logic()
 
     if module is None:
@@ -697,7 +689,7 @@ def get_tancici_figurky_widget_class():
 
 
 def get_tancici_figurky_ii_logic_module():
-    """Načte logiku z: logika sifer/Tančící figurky II/tancici_figurky_2.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Tančící figurky II/tancici_figurky_2.py"""
     logic_file = get_cipher_logic_file("Tančící figurky II", "tancici_figurky_2.py")
     return load_python_module_from_path("tancici_figurky_ii_logic", logic_file)
 
@@ -706,7 +698,7 @@ TANCICI_FIGURKY_II_LOGIC = None
 
 
 def get_tancici_figurky_ii_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Tančící figurky II."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Tančící figurky II až při prvním použití."""
     global TANCICI_FIGURKY_II_LOGIC
 
     if TANCICI_FIGURKY_II_LOGIC is None:
@@ -716,7 +708,7 @@ def get_tancici_figurky_ii_logic():
 
 
 def get_tancici_figurky_ii_widget_class():
-    """Vrátí třídu TanciciFigurkyIIOutputWidget z externího souboru tancici_figurky_2.py."""
+    """Vrátí třídu TanciciFigurkyIIOutputWidget načtenou z externího modulu tancici_figurky_2.py."""
     module = get_tancici_figurky_ii_logic()
 
     if module is None:
@@ -726,7 +718,7 @@ def get_tancici_figurky_ii_widget_class():
 
 
 def get_velky_polsky_kriz_logic_module():
-    """Načte logiku z: logika sifer/Velký polský kříž/velky_polsky_kriz.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Velký polský kříž/velky_polsky_kriz.py"""
     logic_file = get_cipher_logic_file("Velký polský kříž", "velky_polsky_kriz.py")
     return load_python_module_from_path("velky_polsky_kriz_logic", logic_file)
 
@@ -735,7 +727,7 @@ VELKY_POLSKY_KRIZ_LOGIC = None
 
 
 def get_velky_polsky_kriz_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Velký polský kříž."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Velký polský kříž až při prvním použití."""
     global VELKY_POLSKY_KRIZ_LOGIC
 
     if VELKY_POLSKY_KRIZ_LOGIC is None:
@@ -745,7 +737,7 @@ def get_velky_polsky_kriz_logic():
 
 
 def get_velky_polsky_kriz_widget_class():
-    """Vrátí třídu VelkyPolskyKrizOutputWidget z externího souboru velky_polsky_kriz.py."""
+    """Vrátí třídu VelkyPolskyKrizOutputWidget načtenou z externího modulu velky_polsky_kriz.py."""
     module = get_velky_polsky_kriz_logic()
 
     if module is None:
@@ -755,7 +747,7 @@ def get_velky_polsky_kriz_widget_class():
 
 
 def get_velky_polsky_kriz_26_logic_module():
-    """Načte logiku z: logika sifer/Velký polský kříž (26 znaků)/velky_polsky_kriz_26.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Velký polský kříž (26 znaků)/velky_polsky_kriz_26.py"""
     logic_file = get_cipher_logic_file("Velký polský kříž (26 znaků)", "velky_polsky_kriz_26.py")
     return load_python_module_from_path("velky_polsky_kriz_26_logic", logic_file)
 
@@ -764,7 +756,7 @@ VELKY_POLSKY_KRIZ_26_LOGIC = None
 
 
 def get_velky_polsky_kriz_26_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Velký polský kříž (26 znaků)."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Velký polský kříž (26 znaků) až při prvním použití."""
     global VELKY_POLSKY_KRIZ_26_LOGIC
 
     if VELKY_POLSKY_KRIZ_26_LOGIC is None:
@@ -774,7 +766,7 @@ def get_velky_polsky_kriz_26_logic():
 
 
 def get_velky_polsky_kriz_26_widget_class():
-    """Vrátí třídu VelkyPolskyKriz26OutputWidget z externího souboru velky_polsky_kriz_26.py."""
+    """Vrátí třídu VelkyPolskyKriz26OutputWidget načtenou z externího modulu velky_polsky_kriz_26.py."""
     module = get_velky_polsky_kriz_26_logic()
 
     if module is None:
@@ -784,7 +776,7 @@ def get_velky_polsky_kriz_26_widget_class():
 
 
 def get_vlcacka_sifra_logic_module():
-    """Načte logiku z: logika sifer/Vlčácká šifra/vlcacka_sifra.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Vlčácká šifra/vlcacka_sifra.py"""
     logic_file = get_cipher_logic_file("Vlčácká šifra", "vlcacka_sifra.py")
     return load_python_module_from_path("vlcacka_sifra_logic", logic_file)
 
@@ -793,7 +785,7 @@ VLCACKA_SIFRA_LOGIC = None
 
 
 def get_vlcacka_sifra_logic():
-    """Lazy načtení logiky šifry Vlčácká šifra."""
+    """Odloženě načte logiku šifry Vlčácká šifra až při prvním použití."""
     global VLCACKA_SIFRA_LOGIC
 
     if VLCACKA_SIFRA_LOGIC is None:
@@ -804,7 +796,7 @@ def get_vlcacka_sifra_logic():
 
 
 def get_zamena_pismen_a_z_logic_module():
-    """Načte logiku z: logika sifer/Záměna písmen (A=Z)/zamena_pismen_a_z.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Záměna písmen (A=Z)/zamena_pismen_a_z.py"""
     logic_file = get_cipher_logic_file("Záměna písmen (A=Z)", "zamena_pismen_a_z.py")
     return load_python_module_from_path("zamena_pismen_a_z_logic", logic_file)
 
@@ -813,7 +805,7 @@ ZAMENA_PISMEN_A_Z_LOGIC = None
 
 
 def get_zamena_pismen_a_z_logic():
-    """Lazy načtení logiky šifry Záměna písmen (A=Z)."""
+    """Odloženě načte logiku šifry Záměna písmen (A=Z) až při prvním použití."""
     global ZAMENA_PISMEN_A_Z_LOGIC
 
     if ZAMENA_PISMEN_A_Z_LOGIC is None:
@@ -823,7 +815,7 @@ def get_zamena_pismen_a_z_logic():
 
 
 def get_zamena_cisla_a01_z26_logic_module():
-    """Načte logiku z: logika sifer/Záměna písmen za čísla (A=01, Z=26)/zamena_cisla_a01_z26.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Záměna písmen za čísla (A=01, Z=26)/zamena_cisla_a01_z26.py"""
     logic_file = get_cipher_logic_file("Záměna písmen za čísla (A=01, Z=26)", "zamena_cisla_a01_z26.py")
     return load_python_module_from_path("zamena_cisla_a01_z26_logic", logic_file)
 
@@ -832,7 +824,7 @@ ZAMENA_CISLA_A01_Z26_LOGIC = None
 
 
 def get_zamena_cisla_a01_z26_logic():
-    """Lazy načtení logiky šifry Záměna písmen za čísla (A=01, Z=26)."""
+    """Odloženě načte logiku šifry Záměna písmen za čísla (A=01, Z=26) až při prvním použití."""
     global ZAMENA_CISLA_A01_Z26_LOGIC
 
     if ZAMENA_CISLA_A01_Z26_LOGIC is None:
@@ -842,7 +834,7 @@ def get_zamena_cisla_a01_z26_logic():
 
 
 def get_zamena_cisla_a26_z01_logic_module():
-    """Načte logiku z: logika sifer/Záměna písmen za čísla (A=26, Z=01)/zamena_cisla_a26_z01.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Záměna písmen za čísla (A=26, Z=01)/zamena_cisla_a26_z01.py"""
     logic_file = get_cipher_logic_file("Záměna písmen za čísla (A=26, Z=01)", "zamena_cisla_a26_z01.py")
     return load_python_module_from_path("zamena_cisla_a26_z01_logic", logic_file)
 
@@ -851,7 +843,7 @@ ZAMENA_CISLA_A26_Z01_LOGIC = None
 
 
 def get_zamena_cisla_a26_z01_logic():
-    """Lazy načtení logiky šifry Záměna písmen za čísla (A=26, Z=01)."""
+    """Odloženě načte logiku šifry Záměna písmen za čísla (A=26, Z=01) až při prvním použití."""
     global ZAMENA_CISLA_A26_Z01_LOGIC
 
     if ZAMENA_CISLA_A26_Z01_LOGIC is None:
@@ -861,7 +853,7 @@ def get_zamena_cisla_a26_z01_logic():
 
 
 def get_zlomky_logic_module():
-    """Načte logiku z: logika sifer/Zlomky/zlomky.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Zlomky/zlomky.py"""
     logic_file = get_cipher_logic_file("Zlomky", "zlomky.py")
     return load_python_module_from_path("zlomky_logic", logic_file)
 
@@ -870,7 +862,7 @@ ZLOMKY_LOGIC = None
 
 
 def get_zlomky_logic():
-    """Lazy načtení logiky šifry Zlomky."""
+    """Odloženě načte logiku šifry Zlomky až při prvním použití."""
     global ZLOMKY_LOGIC
 
     if ZLOMKY_LOGIC is None:
@@ -880,7 +872,7 @@ def get_zlomky_logic():
 
 
 def get_caesar_logic_module():
-    """Načte logiku z: logika sifer/Caesarova šifra/caesarova_sifra.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Caesarova šifra/caesarova_sifra.py"""
     logic_file = get_cipher_logic_file("Caesarova šifra", "caesarova_sifra.py")
     return load_python_module_from_path("caesarova_sifra_logic", logic_file)
 
@@ -889,7 +881,7 @@ CAESAR_LOGIC = None
 
 
 def get_caesar_logic():
-    """Lazy načtení logiky šifry Caesarova šifra."""
+    """Odloženě načte logiku šifry Caesarova šifra až při prvním použití."""
     global CAESAR_LOGIC
 
     if CAESAR_LOGIC is None:
@@ -899,13 +891,14 @@ def get_caesar_logic():
 
 
 # ============================================================
-# PIRÁTSKÝ GENERÁTOR KLÍČŮ ŠIFER
+# SPOLEČNÝ RENDERER KLÍČŮ ŠIFER
 # ============================================================
 
 def get_pirate_key_renderer_file():
-    """Vrátí cestu ke společnému generátoru klíčů.
+    """Vyhledá společný modul pro generování grafických klíčů šifer.
 
-    Podporuje vývojové spuštění, Windows onedir build i macOS .app build.
+    Cesty jsou řazené tak, aby fungovaly ve vývoji, ve Windows onedir buildu
+    i v macOS .app balíčku.
     """
     candidates = [
         os.path.join(get_app_dir(), "pirate_key_renderer.py"),
@@ -937,7 +930,7 @@ PIRATE_KEY_RENDERER = None
 
 
 def get_pirate_key_renderer():
-    """Lazy načtení společného generátoru pirátských klíčů."""
+    """Odloženě načte společný renderer klíčů až při jeho prvním použití."""
     global PIRATE_KEY_RENDERER
 
     if PIRATE_KEY_RENDERER is None:
@@ -967,9 +960,10 @@ class CipherItem:
 
 
 class TransparentActionButton(QPushButton):
-    """Klikací oblast nad grafickým tlačítkem ve skinu.
+    """Transparentní akční tlačítko vykreslované nad grafickým skinem.
 
-    Text a zámek se kreslí ručně, aby byly vždy přesně uprostřed tlačítka.
+    Popisek i ikona zámku se kreslí ručně, aby zůstaly přesně zarovnané
+    vůči dekorativnímu tlačítku v pozadí.
     """
 
     def __init__(self, text: str, icon_path: str = "", parent=None):
@@ -998,7 +992,7 @@ class TransparentActionButton(QPushButton):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        # Jemný hover efekt, aby zůstal vidět grafický skin tlačítka.
+        # Hover efekt je záměrně jemný, aby nepřekrýval grafický skin tlačítka.
         if self._hovered:
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(255, 220, 120, 28))
@@ -1007,7 +1001,7 @@ class TransparentActionButton(QPushButton):
         painter.setFont(self.font())
         fm = painter.fontMetrics()
 
-        # Větší zámek než předtím.
+        # Velikost ikony se dopočítává relativně k výšce tlačítka.
         icon_size = max(46, min(74, int(self.height() * 0.88)))
         gap = max(14, int(self.width() * 0.040))
         text_w = fm.horizontalAdvance(self.full_text)
@@ -1015,19 +1009,19 @@ class TransparentActionButton(QPushButton):
         center_y = self.height() // 2
         vertical_shift = max(2, int(self.height() * 0.04))
 
-        # Text bude mít střed přesně ve středu tlačítka.
-        # Malý svislý posun dolů pomůže, aby opticky seděl přesněji do středu dekorativního tlačítka.
+        # Text je opticky centrovaný vůči dekorativní ploše tlačítka.
+        # Jemný vertikální posun kompenzuje optiku dekorativního tlačítka.
         text_x = int((self.width() - text_w) / 2)
         icon_x = int(text_x - gap - icon_size)
 
-        # Kdyby bylo tlačítko při zmenšeném okně moc úzké, poskládáme ikonu+text jako skupinu.
+        # U úzkého tlačítka se ikona a text zarovnají jako jeden společný blok.
         if icon_x < 8:
             total_w = icon_size + gap + text_w
             group_x = int((self.width() - total_w) / 2)
             icon_x = group_x
             text_x = group_x + icon_size + gap
 
-        # Zvětšená ikona zámku.
+        # Ikona zámku se škáluje plynule podle aktuální velikosti tlačítka.
         if not self.lock_pixmap.isNull():
             scaled = self.lock_pixmap.scaled(
                 QSize(icon_size, icon_size),
@@ -1122,12 +1116,12 @@ class SifratorSkinWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        # DŮLEŽITÉ PRO EXE A AKTUALIZACE:
-        # assets_path je složka aplikace a icons_path je složka icons vedle EXE.
+        # Poznámka k produkčnímu buildu a aktualizacím:
+        # assets_path ukazuje na kořen aplikace, icons_path na adresář s grafickými prostředky.
         self.assets_path = get_app_dir()
         self.icons_path = get_icons_dir()
 
-        # Čisté BG je přímo ve složce icons/BG.png.
+        # Statické pozadí rozhraní se načítá z icons/BG.png.
         self.skin_path = self.find_asset(["BG.png", "bg.png"])
         self.logo_path = self.find_asset(["logo.png", "Logo.png"])
 
@@ -1135,8 +1129,8 @@ class SifratorSkinWidget(QWidget):
         self.logo_pixmap = self.load_logo_pixmap(self.logo_path) if self.logo_path else QPixmap()
 
         self.ciphers = self.build_cipher_list()
-        # Po startu aplikace nebude vybraná žádná šifra.
-        # Uživatel si ji musí nejdřív zvolit v levém seznamu.
+        # Aplikace startuje bez předvybrané šifry.
+        # Výběr šifry tak vždy probíhá vědomě přes levý seznam.
         self.selected_cipher = None
         self.result_mode = None
         self.cipher_buttons = []
@@ -1147,7 +1141,7 @@ class SifratorSkinWidget(QWidget):
         self.update_layout_positions()
 
     # ------------------------------------------------------------
-    # Souřadnice a assety
+    # Geometrie rozhraní a vyhledávání assetů
     # ------------------------------------------------------------
 
     def sx(self):
@@ -1260,7 +1254,7 @@ class SifratorSkinWidget(QWidget):
             print("Všechny potřebné soubory ve složce icons byly nalezeny.")
 
     # ------------------------------------------------------------
-    # Data šifer
+    # Definice dostupných šifer
     # ------------------------------------------------------------
 
     def build_cipher_list(self):
@@ -1311,7 +1305,7 @@ class SifratorSkinWidget(QWidget):
         return ""
 
     # ------------------------------------------------------------
-    # UI
+    # Inicializace uživatelského rozhraní
     # ------------------------------------------------------------
 
     def create_widgets(self):
@@ -1367,7 +1361,7 @@ class SifratorSkinWidget(QWidget):
 
         self.input_text = QTextEdit(self)
         self.input_text.setPlaceholderText("Zadej tajnou zprávu...")
-        # Automatické šifrování při psaní – bez čekání na kliknutí na tlačítko.
+        # Text se přepočítává automaticky při změně vstupu, bez nutnosti ručního potvrzení.
         self.input_text.textChanged.connect(self.auto_encrypt_action)
 
         self.encrypt_button = TransparentActionButton("ZAŠIFROVAT", self.icon_path("lock_closed.png"), self)
@@ -1408,8 +1402,8 @@ class SifratorSkinWidget(QWidget):
         self.output_text.setLineWrapMode(QTextEdit.WidgetWidth)
         self.output_text.setWordWrapMode(QTextOption.WrapAnywhere)
 
-        # Kreslený výstup Britské vlajky musí být ve scrollovací oblasti.
-        # Samotný kreslicí widget se podle délky výsledku zvětšuje na výšku.
+        # Grafický výstup Britské vlajky je vložen do samostatné scrollovací oblasti.
+        # Kreslicí widget dynamicky upravuje výšku podle rozsahu výsledku.
         self.british_flag_canvas = self.create_british_flag_canvas()
 
         self.british_flag_scroll = QScrollArea(self)
@@ -1420,8 +1414,8 @@ class SifratorSkinWidget(QWidget):
         self.british_flag_scroll.setWidget(self.british_flag_canvas)
         self.british_flag_scroll.hide()
 
-        # Kreslený výstup šifry Čtverec.
-        # Funguje stejně jako Britská vlajka: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Čtverec.
+        # Implementace používá stejný princip jako Britská vlajka: widget uvnitř QScrollArea.
         self.ctverec_canvas = self.create_ctverec_canvas()
 
         self.ctverec_scroll = QScrollArea(self)
@@ -1432,8 +1426,8 @@ class SifratorSkinWidget(QWidget):
         self.ctverec_scroll.setWidget(self.ctverec_canvas)
         self.ctverec_scroll.hide()
 
-        # Kreslený výstup šifry Hebrejský kříž.
-        # Funguje stejně jako Britská vlajka a Čtverec: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Hebrejský kříž.
+        # Implementace využívá stejný QScrollArea mechanismus jako ostatní grafické šifry.
         self.hebrew_cross_canvas = self.create_hebrew_cross_canvas()
 
         self.hebrew_cross_scroll = QScrollArea(self)
@@ -1444,8 +1438,8 @@ class SifratorSkinWidget(QWidget):
         self.hebrew_cross_scroll.setWidget(self.hebrew_cross_canvas)
         self.hebrew_cross_scroll.hide()
 
-        # Kreslený výstup šifry Malý polský kříž.
-        # Funguje stejně jako Britská vlajka, Čtverec a Hebrejský kříž.
+        # Grafický výstup šifry Malý polský kříž.
+        # Výstup je zpracovaný jednotným scrollovacím mechanismem pro grafické šifry.
         self.small_polish_cross_canvas = self.create_small_polish_cross_canvas()
 
         self.small_polish_cross_scroll = QScrollArea(self)
@@ -1456,8 +1450,8 @@ class SifratorSkinWidget(QWidget):
         self.small_polish_cross_scroll.setWidget(self.small_polish_cross_canvas)
         self.small_polish_cross_scroll.hide()
 
-        # Kreslený výstup šifry Moonovo písmo.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Moonovo písmo.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.moon_canvas = self.create_moon_canvas()
 
         self.moon_scroll = QScrollArea(self)
@@ -1468,8 +1462,8 @@ class SifratorSkinWidget(QWidget):
         self.moon_scroll.setWidget(self.moon_canvas)
         self.moon_scroll.hide()
 
-        # Kreslený výstup šifry Morseova abeceda – hory.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Morseova abeceda – hory.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.morse_hory_canvas = self.create_morse_hory_canvas()
 
         self.morse_hory_scroll = QScrollArea(self)
@@ -1480,8 +1474,8 @@ class SifratorSkinWidget(QWidget):
         self.morse_hory_scroll.setWidget(self.morse_hory_canvas)
         self.morse_hory_scroll.hide()
 
-        # Kreslený výstup šifry Morseova abeceda – pila.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Morseova abeceda – pila.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.morse_pila_canvas = self.create_morse_pila_canvas()
 
         self.morse_pila_scroll = QScrollArea(self)
@@ -1492,8 +1486,8 @@ class SifratorSkinWidget(QWidget):
         self.morse_pila_scroll.setWidget(self.morse_pila_canvas)
         self.morse_pila_scroll.hide()
 
-        # Kreslený výstup šifry Morseova abeceda – stromy.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Morseova abeceda – stromy.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.morse_stromy_canvas = self.create_morse_stromy_canvas()
 
         self.morse_stromy_scroll = QScrollArea(self)
@@ -1504,8 +1498,8 @@ class SifratorSkinWidget(QWidget):
         self.morse_stromy_scroll.setWidget(self.morse_stromy_canvas)
         self.morse_stromy_scroll.hide()
 
-        # Kreslený výstup šifry Mříž.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Mříž.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.mriz_canvas = self.create_mriz_canvas()
 
         self.mriz_scroll = QScrollArea(self)
@@ -1516,8 +1510,8 @@ class SifratorSkinWidget(QWidget):
         self.mriz_scroll.setWidget(self.mriz_canvas)
         self.mriz_scroll.hide()
 
-        # Kreslený výstup šifry Okno.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Okno.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.okno_canvas = self.create_okno_canvas()
 
         self.okno_scroll = QScrollArea(self)
@@ -1528,8 +1522,8 @@ class SifratorSkinWidget(QWidget):
         self.okno_scroll.setWidget(self.okno_canvas)
         self.okno_scroll.hide()
 
-        # Kreslený výstup šifry Posunková abeceda.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Posunková abeceda.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.posunkova_abeceda_canvas = self.create_posunkova_abeceda_canvas()
 
         self.posunkova_abeceda_scroll = QScrollArea(self)
@@ -1540,8 +1534,8 @@ class SifratorSkinWidget(QWidget):
         self.posunkova_abeceda_scroll.setWidget(self.posunkova_abeceda_canvas)
         self.posunkova_abeceda_scroll.hide()
 
-        # Kreslený výstup šifry Pseudo-Čína.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Pseudo-Čína.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.pseudo_cina_canvas = self.create_pseudo_cina_canvas()
 
         self.pseudo_cina_scroll = QScrollArea(self)
@@ -1552,8 +1546,8 @@ class SifratorSkinWidget(QWidget):
         self.pseudo_cina_scroll.setWidget(self.pseudo_cina_canvas)
         self.pseudo_cina_scroll.hide()
 
-        # Kreslený výstup šifry Semafor.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Semafor.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.semafor_canvas = self.create_semafor_canvas()
 
         self.semafor_scroll = QScrollArea(self)
@@ -1564,8 +1558,8 @@ class SifratorSkinWidget(QWidget):
         self.semafor_scroll.setWidget(self.semafor_canvas)
         self.semafor_scroll.hide()
 
-        # Kreslený výstup šifry SuperKrychle.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry SuperKrychle.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.superkrychle_canvas = self.create_superkrychle_canvas()
 
         self.superkrychle_scroll = QScrollArea(self)
@@ -1576,8 +1570,8 @@ class SifratorSkinWidget(QWidget):
         self.superkrychle_scroll.setWidget(self.superkrychle_canvas)
         self.superkrychle_scroll.hide()
 
-        # Kreslený výstup šifry Tančící figurky.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Tančící figurky.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.tancici_figurky_canvas = self.create_tancici_figurky_canvas()
 
         self.tancici_figurky_scroll = QScrollArea(self)
@@ -1588,8 +1582,8 @@ class SifratorSkinWidget(QWidget):
         self.tancici_figurky_scroll.setWidget(self.tancici_figurky_canvas)
         self.tancici_figurky_scroll.hide()
 
-        # Kreslený výstup šifry Tančící figurky II.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Tančící figurky II.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.tancici_figurky_ii_canvas = self.create_tancici_figurky_ii_canvas()
 
         self.tancici_figurky_ii_scroll = QScrollArea(self)
@@ -1600,8 +1594,8 @@ class SifratorSkinWidget(QWidget):
         self.tancici_figurky_ii_scroll.setWidget(self.tancici_figurky_ii_canvas)
         self.tancici_figurky_ii_scroll.hide()
 
-        # Kreslený výstup šifry Velký polský kříž.
-        # Funguje stejně jako ostatní kreslené šifry: widget je vložený do QScrollArea.
+        # Grafický výstup šifry Velký polský kříž.
+        # Všechny grafické šifry používají jednotný model: vlastní widget vložený do QScrollArea.
         self.velky_polsky_kriz_canvas = self.create_velky_polsky_kriz_canvas()
 
         self.velky_polsky_kriz_scroll = QScrollArea(self)
@@ -1612,7 +1606,7 @@ class SifratorSkinWidget(QWidget):
         self.velky_polsky_kriz_scroll.setWidget(self.velky_polsky_kriz_canvas)
         self.velky_polsky_kriz_scroll.hide()
 
-        # Kreslený výstup šifry Velký polský kříž (26 znaků).
+        # Grafický výstup šifry Velký polský kříž (26 znaků).
         self.velky_polsky_kriz_26_canvas = self.create_velky_polsky_kriz_26_canvas()
 
         self.velky_polsky_kriz_26_scroll = QScrollArea(self)
@@ -2113,8 +2107,8 @@ class SifratorSkinWidget(QWidget):
             """)
 
     def update_layout_positions(self):
-        # Logo – menší a přesně vycentrované do horního kruhu v BG.png.
-        # Původně bylo moc nízko/velké a zasahovalo do textů vpravo.
+        # Logo je cíleně škálované a centrované do horního kruhového prvku ve skinu.
+        # Rozměry a pozice zohledňují kolize s navazujícími textovými prvky.
         self.logo_label.setGeometry(self.sr(740, 38, 195, 190))
         if not self.logo_pixmap.isNull():
             pix = self.logo_pixmap.scaled(
@@ -2125,25 +2119,25 @@ class SifratorSkinWidget(QWidget):
             self.logo_label.setPixmap(pix)
         self.logo_label.raise_()
 
-        # Levá část
+        # Levý panel se seznamem šifer
         self.title_left.setGeometry(self.sr(120, 94, 520, 42))
         self.search_edit.setGeometry(self.sr(98, 145, 565, 42))
         self.search_icon.setGeometry(self.sr(606, 145, 48, 42))
         self.scroll_area.setGeometry(self.sr(86, 210, 615, 610))
 
-        # Pravá horní část
+        # Pravý horní informační panel
         self.selected_title.setGeometry(self.sr(965, 77, 622, 58))
         self.selected_icon.setGeometry(self.sr(1518, 76, 70, 70))
 
-        # Vstupní část – nadpis je ve středovém horním rámečku nad vstupem.
-        # Posunutý trochu níž a více doprava, aby nelezl pod kruhové logo.
+        # Vstupní část je zarovnaná na střed horního rámečku nad textovým polem.
+        # Posun kompenzuje prostor zabraný kruhovým logem ve skinu.
         self.input_label.setGeometry(self.sr(1015, 182, 500, 34))
         self.input_text.setGeometry(self.sr(728, 265, 822, 126))
 
         self.encrypt_button.setGeometry(self.sr(728, 399, 405, 79))
         self.decrypt_button.setGeometry(self.sr(1168, 399, 438, 79))
 
-        # Výsledek – nadpis je nad textovým polem, ne uvnitř něj.
+        # Nadpis výsledku je samostatný prvek nad výstupním polem.
         self.result_title.setGeometry(self.sr(770, 540, 420, 34))
         self.key_button.setGeometry(self.sr(1218, 534, 310, 42))
         self.output_text.setGeometry(self.sr(735, 585, 855, 232))
@@ -2245,8 +2239,8 @@ class SifratorSkinWidget(QWidget):
         self.input_text.setLineWrapMode(QTextEdit.WidgetWidth)
         self.input_text.setWordWrapMode(QTextOption.WrapAnywhere)
         self.output_text.setFont(QFont("Georgia", self.fs(14)))
-        # Výstup musí zalamovat i dlouhá slova bez mezer.
-        # Jinak se například dlouhý Caesarův text píše pořád do jednoho řádku.
+        # Výstup musí podporovat zalomení dlouhých řetězců bez mezer.
+        # To řeší například dlouhé výstupy Caesarovy šifry bez přirozených mezer.
         self.output_text.setLineWrapMode(QTextEdit.WidgetWidth)
         self.output_text.setWordWrapMode(QTextOption.WrapAnywhere)
         self.encrypt_button.setFont(QFont("Georgia", self.fs(19), QFont.Bold))
@@ -2329,16 +2323,16 @@ class SifratorSkinWidget(QWidget):
         if hasattr(self, "velky_polsky_kriz_26_scroll"):
             self.resize_velky_polsky_kriz_26_canvas_to_content()
 
-        # Ikony zámků kreslí TransparentActionButton ručně podle výšky tlačítka.
-        # Tady necháváme jen font textu; samotná ikona je zvětšená v paintEvent().
+        # Ikony zámků vykresluje TransparentActionButton dynamicky podle výšky tlačítka.
+        # Zde se nastavuje pouze font; velikost ikony se řeší v paintEvent().
         self.update_text_editor_margins()
 
     def update_text_editor_margins(self):
-        """Využije co největší část rámečku, ale nechá vpravo rezervu na brko."""
+        """Nastaví okraje textových editorů s rezervou pro dekorativní prvek vpravo."""
         left = max(8, self.fs(14))
         top = max(6, self.fs(10))
         bottom = max(6, self.fs(10))
-        # Rezerva na kalamář s perem vpravo
+        # Rezerva pro dekorativní kalamář s perem na pravé straně
         right = max(110, int(170 * self.sx()))
 
         self.input_text.setViewportMargins(left, top, right, bottom)
@@ -2352,15 +2346,15 @@ class SifratorSkinWidget(QWidget):
         self.output_text.document().setDocumentMargin(0)
 
     # ------------------------------------------------------------
-    # Logika
+    # Aplikační logika a napojení šifer
     # ------------------------------------------------------------
 
     def create_british_flag_canvas(self):
-        """Vytvoří kreslicí widget pro Britskou vlajku z externího souboru."""
+        """Vytvoří vykreslovací widget pro Britskou vlajku z externě načteného modulu."""
         widget_class = get_british_flag_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Britská vlajka")
@@ -2368,11 +2362,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_ctverec_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Čtverec z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Čtverec z externě načteného modulu."""
         widget_class = get_ctverec_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Čtverec")
@@ -2380,11 +2374,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_hebrew_cross_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Hebrejský kříž z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Hebrejský kříž z externě načteného modulu."""
         widget_class = get_hebrew_cross_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Hebrejský kříž")
@@ -2392,11 +2386,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_small_polish_cross_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Malý polský kříž z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Malý polský kříž z externě načteného modulu."""
         widget_class = get_small_polish_cross_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Malý polský kříž")
@@ -2404,11 +2398,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_moon_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Moonovo písmo z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Moonovo písmo z externě načteného modulu."""
         widget_class = get_moon_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Moonovo písmo")
@@ -2416,11 +2410,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_morse_hory_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Morseova abeceda – hory z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Morseova abeceda – hory z externě načteného modulu."""
         widget_class = get_morse_hory_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Morseova abeceda – hory")
@@ -2428,11 +2422,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_morse_pila_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Morseova abeceda – pila z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Morseova abeceda – pila z externě načteného modulu."""
         widget_class = get_morse_pila_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Morseova abeceda – pila")
@@ -2440,11 +2434,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_morse_stromy_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Morseova abeceda – stromy z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Morseova abeceda – stromy z externě načteného modulu."""
         widget_class = get_morse_stromy_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Morseova abeceda – stromy")
@@ -2452,11 +2446,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_mriz_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Mříž z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Mříž z externě načteného modulu."""
         widget_class = get_mriz_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Mříž")
@@ -2464,11 +2458,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_okno_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Okno z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Okno z externě načteného modulu."""
         widget_class = get_okno_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Okno")
@@ -2476,11 +2470,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_posunkova_abeceda_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Posunková abeceda z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Posunková abeceda z externě načteného modulu."""
         widget_class = get_posunkova_abeceda_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Posunková abeceda")
@@ -2488,11 +2482,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_pseudo_cina_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Pseudo-Čína z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Pseudo-Čína z externě načteného modulu."""
         widget_class = get_pseudo_cina_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Pseudo-Čína")
@@ -2500,11 +2494,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_semafor_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Semafor z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Semafor z externě načteného modulu."""
         widget_class = get_semafor_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Semafor")
@@ -2512,11 +2506,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_superkrychle_canvas(self):
-        """Vytvoří kreslicí widget pro šifru SuperKrychle z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru SuperKrychle z externě načteného modulu."""
         widget_class = get_superkrychle_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul SuperKrychle")
@@ -2524,11 +2518,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_tancici_figurky_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Tančící figurky z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Tančící figurky z externě načteného modulu."""
         widget_class = get_tancici_figurky_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Tančící figurky")
@@ -2536,11 +2530,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_tancici_figurky_ii_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Tančící figurky II z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Tančící figurky II z externě načteného modulu."""
         widget_class = get_tancici_figurky_ii_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Tančící figurky II")
@@ -2548,11 +2542,11 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_velky_polsky_kriz_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Velký polský kříž z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Velký polský kříž z externě načteného modulu."""
         widget_class = get_velky_polsky_kriz_widget_class()
 
         if widget_class is not None:
-            # Bez rodiče – rodičem se stane viewport QScrollArea přes setWidget().
+            # Widget se vytváří bez parenta; vlastnictví následně převezme QScrollArea přes setWidget().
             return widget_class()
 
         fallback = QLabel("Chybí kreslicí modul Velký polský kříž")
@@ -2560,7 +2554,7 @@ class SifratorSkinWidget(QWidget):
         return fallback
 
     def create_velky_polsky_kriz_26_canvas(self):
-        """Vytvoří kreslicí widget pro šifru Velký polský kříž (26 znaků) z externího souboru."""
+        """Vytvoří vykreslovací widget pro šifru Velký polský kříž (26 znaků) z externě načteného modulu."""
         widget_class = get_velky_polsky_kriz_26_widget_class()
 
         if widget_class is not None:
@@ -2668,15 +2662,15 @@ class SifratorSkinWidget(QWidget):
         self.output_text.setPlainText(text)
 
     def normalize_draw_text_for_size(self, text: str) -> str:
-        """Normalizuje text stejně jako šifra pro výpočet velikosti kresleného výstupu."""
+        """Normalizuje text stejně jako šifra pro výpočet velikosti grafického výstupu."""
         normalized = unicodedata.normalize("NFKD", text or "")
         normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
         return normalized.upper()
 
     def estimate_british_flag_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu Britské vlajky.
+        """Spočítá potřebnou výšku grafického výstupu Britské vlajky.
 
-        Díky tomu se kreslicí widget zvětší a QScrollArea může scrollovat.
+        Díky tomu se vykreslovací widget zvětší a QScrollArea může scrollovat.
         """
         if not hasattr(self, "british_flag_scroll"):
             return 180
@@ -2728,7 +2722,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.british_flag_scroll.height(), y + cell_h + 24)
 
     def resize_british_flag_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "british_flag_scroll") or not hasattr(self, "british_flag_canvas"):
             return
 
@@ -2746,7 +2740,7 @@ class SifratorSkinWidget(QWidget):
             self.british_flag_canvas.update_content_size()
 
     def estimate_ctverec_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Čtverec."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Čtverec."""
         if not hasattr(self, "ctverec_scroll"):
             return 180
 
@@ -2754,7 +2748,7 @@ class SifratorSkinWidget(QWidget):
             text if text is not None else getattr(self.ctverec_canvas, "cipher_text", "")
         )
 
-        # Čtverec nemá W, proto se pro kreslený výpočet bere jako V.
+        # Šifra Čtverec neobsahuje W, proto se pro grafický výstup normalizuje na V.
         source_text = source_text.replace("W", "V")
 
         scale = self.sc()
@@ -2800,7 +2794,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.ctverec_scroll.height(), y + cell_h + 24)
 
     def resize_ctverec_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Čtverec, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Čtverec, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "ctverec_scroll") or not hasattr(self, "ctverec_canvas"):
             return
 
@@ -2818,7 +2812,7 @@ class SifratorSkinWidget(QWidget):
             self.ctverec_canvas.update_content_size()
 
     def estimate_hebrew_cross_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Hebrejský kříž."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Hebrejský kříž."""
         if not hasattr(self, "hebrew_cross_scroll"):
             return 180
 
@@ -2827,8 +2821,8 @@ class SifratorSkinWidget(QWidget):
         )
 
         scale = self.sc()
-        # Hebrejský kříž kreslí větší a čitelnější symboly.
-        # Hodnoty musí odpovídat HebrejskyKrizOutputWidget v hebrejsky_kriz.py.
+        # Hebrejský kříž používá zvětšené symboly pro lepší čitelnost ve výstupu.
+        # Parametry musí zůstat kompatibilní s HebrejskyKrizOutputWidget v modulu hebrejsky_kriz.py.
         cell_w = max(54, int(74 * scale))
         cell_h = max(48, int(66 * scale))
         letter_gap = max(8, int(12 * scale))
@@ -2871,7 +2865,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.hebrew_cross_scroll.height(), y + cell_h + 24)
 
     def resize_hebrew_cross_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Hebrejský kříž, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Hebrejský kříž, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "hebrew_cross_scroll") or not hasattr(self, "hebrew_cross_canvas"):
             return
 
@@ -2889,7 +2883,7 @@ class SifratorSkinWidget(QWidget):
             self.hebrew_cross_canvas.update_content_size()
 
     def estimate_small_polish_cross_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Malý polský kříž."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Malý polský kříž."""
         if not hasattr(self, "small_polish_cross_scroll"):
             return 180
 
@@ -2940,7 +2934,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.small_polish_cross_scroll.height(), y + cell_h + 24)
 
     def resize_small_polish_cross_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Malý polský kříž, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Malý polský kříž, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "small_polish_cross_scroll") or not hasattr(self, "small_polish_cross_canvas"):
             return
 
@@ -2958,7 +2952,7 @@ class SifratorSkinWidget(QWidget):
             self.small_polish_cross_canvas.update_content_size()
 
     def estimate_moon_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Moonovo písmo."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Moonovo písmo."""
         if not hasattr(self, "moon_scroll"):
             return 180
 
@@ -3009,7 +3003,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.moon_scroll.height(), y + cell_h + 24)
 
     def resize_moon_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Moonovo písmo, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Moonovo písmo, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "moon_scroll") or not hasattr(self, "moon_canvas"):
             return
 
@@ -3027,7 +3021,7 @@ class SifratorSkinWidget(QWidget):
             self.moon_canvas.update_content_size()
 
     def estimate_morse_hory_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Morseova abeceda – hory."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Morseova abeceda – hory."""
         if not hasattr(self, "morse_hory_scroll"):
             return 180
 
@@ -3094,7 +3088,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.morse_hory_scroll.height(), y + cell_h + 24)
 
     def resize_morse_hory_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Morseova abeceda – hory, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Morseova abeceda – hory, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "morse_hory_scroll") or not hasattr(self, "morse_hory_canvas"):
             return
 
@@ -3112,7 +3106,7 @@ class SifratorSkinWidget(QWidget):
             self.morse_hory_canvas.update_content_size()
 
     def estimate_morse_pila_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Morseova abeceda – pila."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Morseova abeceda – pila."""
         if not hasattr(self, "morse_pila_scroll"):
             return 180
 
@@ -3181,7 +3175,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.morse_pila_scroll.height(), y + cell_h + 24)
 
     def resize_morse_pila_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Morseova abeceda – pila, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Morseova abeceda – pila, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "morse_pila_scroll") or not hasattr(self, "morse_pila_canvas"):
             return
 
@@ -3199,7 +3193,7 @@ class SifratorSkinWidget(QWidget):
             self.morse_pila_canvas.update_content_size()
 
     def estimate_morse_stromy_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Morseova abeceda – stromy."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Morseova abeceda – stromy."""
         if not hasattr(self, "morse_stromy_scroll"):
             return 180
 
@@ -3250,7 +3244,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.morse_stromy_scroll.height(), y + cell_h + 24)
 
     def resize_morse_stromy_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Morseova abeceda – stromy, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Morseova abeceda – stromy, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "morse_stromy_scroll") or not hasattr(self, "morse_stromy_canvas"):
             return
 
@@ -3268,7 +3262,7 @@ class SifratorSkinWidget(QWidget):
             self.morse_stromy_canvas.update_content_size()
 
     def estimate_mriz_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Mříž."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Mříž."""
         if not hasattr(self, "mriz_scroll"):
             return 180
 
@@ -3319,7 +3313,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.mriz_scroll.height(), y + cell_h + 24)
 
     def resize_mriz_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Mříž, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Mříž, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "mriz_scroll") or not hasattr(self, "mriz_canvas"):
             return
 
@@ -3337,7 +3331,7 @@ class SifratorSkinWidget(QWidget):
             self.mriz_canvas.update_content_size()
 
     def estimate_okno_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Okno."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Okno."""
         if not hasattr(self, "okno_scroll"):
             return 180
 
@@ -3386,7 +3380,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.okno_scroll.height(), y + cell_h + 24)
 
     def resize_okno_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Okno, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Okno, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "okno_scroll") or not hasattr(self, "okno_canvas"):
             return
 
@@ -3404,7 +3398,7 @@ class SifratorSkinWidget(QWidget):
             self.okno_canvas.update_content_size()
 
     def estimate_posunkova_abeceda_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Posunková abeceda."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Posunková abeceda."""
         if not hasattr(self, "posunkova_abeceda_scroll"):
             return 180
 
@@ -3455,7 +3449,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.posunkova_abeceda_scroll.height(), y + cell_h + 24)
 
     def resize_posunkova_abeceda_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Posunková abeceda, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Posunková abeceda, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "posunkova_abeceda_scroll") or not hasattr(self, "posunkova_abeceda_canvas"):
             return
 
@@ -3473,7 +3467,7 @@ class SifratorSkinWidget(QWidget):
             self.posunkova_abeceda_canvas.update_content_size()
 
     def estimate_pseudo_cina_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Pseudo-Čína."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Pseudo-Čína."""
         if not hasattr(self, "pseudo_cina_scroll"):
             return 180
 
@@ -3524,7 +3518,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.pseudo_cina_scroll.height(), y + cell_h + 24)
 
     def resize_pseudo_cina_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Pseudo-Čína, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Pseudo-Čína, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "pseudo_cina_scroll") or not hasattr(self, "pseudo_cina_canvas"):
             return
 
@@ -3542,7 +3536,7 @@ class SifratorSkinWidget(QWidget):
             self.pseudo_cina_canvas.update_content_size()
 
     def estimate_semafor_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Semafor."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Semafor."""
         if not hasattr(self, "semafor_scroll"):
             return 180
 
@@ -3593,7 +3587,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.semafor_scroll.height(), y + cell_h + 24)
 
     def resize_semafor_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Semafor, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Semafor, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "semafor_scroll") or not hasattr(self, "semafor_canvas"):
             return
 
@@ -3611,7 +3605,7 @@ class SifratorSkinWidget(QWidget):
             self.semafor_canvas.update_content_size()
 
     def estimate_superkrychle_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry SuperKrychle."""
+        """Spočítá potřebnou výšku grafického výstupu šifry SuperKrychle."""
         if not hasattr(self, "superkrychle_scroll"):
             return 180
 
@@ -3662,7 +3656,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.superkrychle_scroll.height(), y + cell_h + 24)
 
     def resize_superkrychle_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu SuperKrychle, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu SuperKrychle, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "superkrychle_scroll") or not hasattr(self, "superkrychle_canvas"):
             return
 
@@ -3680,7 +3674,7 @@ class SifratorSkinWidget(QWidget):
             self.superkrychle_canvas.update_content_size()
 
     def estimate_tancici_figurky_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Tančící figurky."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Tančící figurky."""
         if not hasattr(self, "tancici_figurky_scroll"):
             return 180
 
@@ -3731,7 +3725,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.tancici_figurky_scroll.height(), y + cell_h + 24)
 
     def resize_tancici_figurky_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Tančící figurky, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Tančící figurky, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "tancici_figurky_scroll") or not hasattr(self, "tancici_figurky_canvas"):
             return
 
@@ -3749,7 +3743,7 @@ class SifratorSkinWidget(QWidget):
             self.tancici_figurky_canvas.update_content_size()
 
     def estimate_tancici_figurky_ii_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Tančící figurky II."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Tančící figurky II."""
         if not hasattr(self, "tancici_figurky_ii_scroll"):
             return 180
 
@@ -3800,7 +3794,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.tancici_figurky_ii_scroll.height(), y + cell_h + 24)
 
     def resize_tancici_figurky_ii_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Tančící figurky II, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Tančící figurky II, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "tancici_figurky_ii_scroll") or not hasattr(self, "tancici_figurky_ii_canvas"):
             return
 
@@ -3818,7 +3812,7 @@ class SifratorSkinWidget(QWidget):
             self.tancici_figurky_ii_canvas.update_content_size()
 
     def estimate_velky_polsky_kriz_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Velký polský kříž."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Velký polský kříž."""
         if not hasattr(self, "velky_polsky_kriz_scroll"):
             return 180
 
@@ -3826,7 +3820,7 @@ class SifratorSkinWidget(QWidget):
             text if text is not None else getattr(self.velky_polsky_kriz_canvas, "cipher_text", "")
         )
 
-        # CH je jeden symbol.
+        # Dvojice CH se zpracovává jako jeden samostatný symbol.
         source_text = source_text.replace("CH", "X")
 
         scale = self.sc()
@@ -3872,7 +3866,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.velky_polsky_kriz_scroll.height(), y + cell_h + 24)
 
     def resize_velky_polsky_kriz_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Velký polský kříž, aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Velký polský kříž, aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "velky_polsky_kriz_scroll") or not hasattr(self, "velky_polsky_kriz_canvas"):
             return
 
@@ -3890,7 +3884,7 @@ class SifratorSkinWidget(QWidget):
             self.velky_polsky_kriz_canvas.update_content_size()
 
     def estimate_velky_polsky_kriz_26_height(self, text: str | None = None) -> int:
-        """Spočítá potřebnou výšku kresleného výstupu šifry Velký polský kříž (26 znaků)."""
+        """Spočítá potřebnou výšku grafického výstupu šifry Velký polský kříž (26 znaků)."""
         if not hasattr(self, "velky_polsky_kriz_26_scroll"):
             return 180
 
@@ -3941,7 +3935,7 @@ class SifratorSkinWidget(QWidget):
         return max(self.velky_polsky_kriz_26_scroll.height(), y + cell_h + 24)
 
     def resize_velky_polsky_kriz_26_canvas_to_content(self, text: str | None = None):
-        """Nastaví velikost kreslicího widgetu Velký polský kříž (26 znaků), aby se dlouhý výsledek dal scrollovat."""
+        """Nastaví velikost vykreslovacího widgetu Velký polský kříž (26 znaků), aby se dlouhý výsledek dal scrollovat."""
         if not hasattr(self, "velky_polsky_kriz_26_scroll") or not hasattr(self, "velky_polsky_kriz_26_canvas"):
             return
 
@@ -3961,7 +3955,7 @@ class SifratorSkinWidget(QWidget):
     def set_result_output(self, result: str):
         """Zobrazí výsledek podle aktuální šifry.
 
-        Britská vlajka, Čtverec, Hebrejský kříž, Malý polský kříž, Moonovo písmo, Morseova abeceda – hory, Morseova abeceda – pila, Morseova abeceda – stromy, Mříž, Okno, Posunková abeceda, Pseudo-Čína, Semafor, SuperKrychle a Tančící figurky při šifrování používají kreslený výstup ve scrollovací oblasti.
+        Britská vlajka, Čtverec, Hebrejský kříž, Malý polský kříž, Moonovo písmo, Morseova abeceda – hory, Morseova abeceda – pila, Morseova abeceda – stromy, Mříž, Okno, Posunková abeceda, Pseudo-Čína, Semafor, SuperKrychle a Tančící figurky při šifrování používají grafický výstup ve scrollovací oblasti.
         Ostatní šifry používají QTextEdit.
         """
         if self.is_british_flag_selected() and self.result_mode == "encrypt":
@@ -4853,7 +4847,7 @@ class SifratorSkinWidget(QWidget):
         """Vyfiltruje šifry a znovu je naskládá kompaktně od prvního řádku."""
         normalized_query = self.normalize_search_text(query)
 
-        # Nejdřív vyčistit layout. Widgety se nemažou, jen se vyndají z pozic.
+        # Layout se nejprve vyčistí; widgety se pouze odeberou z pozic, nemažou se.
         while self.grid.count():
             item = self.grid.takeAt(0)
             widget = item.widget()
@@ -4868,13 +4862,13 @@ class SifratorSkinWidget(QWidget):
             if visible:
                 visible_buttons.append(btn)
 
-        # Přidat výsledky znovu od začátku: 2 sloupce, řádek 0, 1, 2...
+        # Filtrované výsledky se znovu vloží od začátku do dvousloupcové mřížky.
         for index, btn in enumerate(visible_buttons):
             row = index // 2
             col = index % 2
             self.grid.addWidget(btn, row, col, alignment=Qt.AlignTop)
 
-        # Skryté widgety nesmí zabírat místo.
+        # Skryté widgety se nesmí podílet na výpočtu rozložení.
         for btn in self.cipher_buttons:
             if btn not in visible_buttons:
                 btn.hide()
@@ -4889,7 +4883,7 @@ class SifratorSkinWidget(QWidget):
         self.update_selected_header()
         self.update_status()
         self.update_output_widget_mode()
-        # Jakmile uživatel vybere jinou šifru, výsledek se hned přepočítá.
+        # Po změně šifry se výsledek okamžitě přepočítá podle aktuálního vstupu.
         self.auto_encrypt_action()
 
     def refresh_cipher_styles(self):
@@ -4912,7 +4906,7 @@ class SifratorSkinWidget(QWidget):
 
         text = f"ŠIFRA – {self.selected_cipher.upper()}"
 
-        # Rezerva pro ikonku vpravo.
+        # Rezerva pro pravostrannou ikonu.
         available = max(80, self.selected_title.width() - int(90 * self.sx()))
         shown = self.selected_title.fontMetrics().elidedText(text, Qt.ElideRight, available)
         self.selected_title.setText(shown)
@@ -5872,7 +5866,7 @@ class SifratorSkinWidget(QWidget):
             self.apply_output_line_spacing(self.is_binary_squares_selected())
 
     def encrypt_action(self):
-        # Tlačítko může zůstat jako ruční přepočet, ale není už nutné ho mačkat.
+        # Tlačítko zůstává jako ruční přepočet, automatický režim ale pracuje průběžně.
         self.auto_encrypt_action()
 
     def decrypt_action(self):
@@ -5888,7 +5882,7 @@ class SifratorSkinWidget(QWidget):
         self.apply_output_line_spacing(self.is_binary_squares_selected())
 
     # ------------------------------------------------------------
-    # Události
+    # Události okna a systémová inicializace
     # ------------------------------------------------------------
 
     def resizeEvent(self, event):
@@ -5913,13 +5907,13 @@ class SifratorSkinWidget(QWidget):
 
 
 # ============================================================
-# DOPLNĚNÍ ŠIFRY: Zednářská šifra
-# Tato část je schválně jako samostatné napojení, aby nebylo nutné
-# rozepisovat další dlouhé bloky přímo do původních metod.
+# ROZŠÍŘENÍ: Zednářská šifra
+# Tato část je oddělená jako samostatná integrace, aby nebylo nutné
+# neúměrně rozšiřovat původní metody hlavního widgetu.
 # ============================================================
 
 def get_zednarska_sifra_logic_module():
-    """Načte logiku z: logika sifer/Zednářská šifra/zednarska_sifra.py"""
+    """Načte modul logiky šifry z cesty: logika sifer/Zednářská šifra/zednarska_sifra.py"""
     logic_file = get_cipher_logic_file("Zednářská šifra", "zednarska_sifra.py")
     return load_python_module_from_path("zednarska_sifra_logic", logic_file)
 
@@ -5928,7 +5922,7 @@ ZEDNARSKA_SIFRA_LOGIC = None
 
 
 def get_zednarska_sifra_logic():
-    """Lazy načtení logiky a kreslicího widgetu šifry Zednářská šifra."""
+    """Odloženě načte logiku a vykreslovacího widgetu šifry Zednářská šifra až při prvním použití."""
     global ZEDNARSKA_SIFRA_LOGIC
 
     if ZEDNARSKA_SIFRA_LOGIC is None:
@@ -5938,7 +5932,7 @@ def get_zednarska_sifra_logic():
 
 
 def get_zednarska_sifra_widget_class():
-    """Vrátí třídu ZednarskaSifraOutputWidget z externího souboru zednarska_sifra.py."""
+    """Vrátí třídu ZednarskaSifraOutputWidget načtenou z externího modulu zednarska_sifra.py."""
     module = get_zednarska_sifra_logic()
 
     if module is None:
@@ -6166,12 +6160,12 @@ SifratorSkinWidget.decrypt_selected_cipher = _PATCHED_DECRYPT_SELECTED_CIPHER
 
 
 # ============================================================
-# DOPLNĚK UI PRO CAESAROVU ŠIFRU
+# UI ROZŠÍŘENÍ PRO CAESAROVU ŠIFRU
 #
-# Pouze když je vybraná Caesarova šifra:
-# - místo tlačítka ZAŠIFROVAT se zobrazí rozevírací seznam DOPŘEDU/DOZADU,
-# - místo tlačítka DEŠIFROVAT se zobrazí číselné pole O KOLIK,
-# - ostatní šifry dál používají původní tlačítka.
+# Rozšíření se aktivuje pouze pro Caesarovu šifru:
+# - levá akční oblast slouží pro volbu směru posunu,
+# - pravá akční oblast slouží pro nastavení velikosti posunu,
+# - ostatní šifry zachovávají standardní akční tlačítka.
 # ============================================================
 
 _CAESAR_UI_ORIGINAL_CREATE_WIDGETS = SifratorSkinWidget.create_widgets
@@ -6213,12 +6207,12 @@ class CaesarDirectionCombo(QComboBox):
         painter.setFont(self.font())
         painter.setPen(QColor(Colors.GOLD_LIGHT if not self._hovered else "#fff0bd"))
 
-        # Text doprostřed celé plochy modrého tlačítka.
-        # Vpravo necháme jen malý prostor pro nenápadnou šipku rozbalení.
+        # Text je centrovaný přes celou plochu původního grafického tlačítka.
+        # Vpravo zůstává pouze minimální prostor pro decentní indikaci rozbalení.
         text_rect = self.rect().adjusted(26, 0, -54, 0)
         painter.drawText(text_rect, Qt.AlignCenter, self.currentText())
 
-        # Vlastní decentní šipka, aby bylo poznat, že je to rozbalovací seznam.
+        # Vlastní indikátor šipky zachovává vzhled skinu a současně naznačuje rozbalovací prvek.
         arrow_font = QFont(self.font())
         arrow_font.setPointSize(max(10, int(self.font().pointSize() * 0.58)))
         painter.setFont(arrow_font)
@@ -6231,8 +6225,8 @@ def _caesar_ui_is_selected(self):
 
 
 def _caesar_ui_style():
-    # Prvky leží přímo na grafickém skinu původních tlačítek.
-    # Bez vnitřního obdélníku, bez okrajů, opticky jako původní tlačítka.
+    # Ovládací prvky jsou položeny přímo na grafický skin původních tlačítek.
+    # Bez dodatečných rámečků, aby vizuálně navazovaly na původní tlačítka.
     return f"""
         QComboBox, QSpinBox {{
             color: {Colors.GOLD_LIGHT};
@@ -6319,8 +6313,8 @@ def _caesar_ui_create_widgets(self):
 def _caesar_ui_update_layout_positions(self):
     _CAESAR_UI_ORIGINAL_UPDATE_LAYOUT_POSITIONS(self)
 
-    # Vezmeme plochu původních grafických tlačítek a necháme pár pixelů rezervu,
-    # aby text nelepil na ozdobný okraj skinu.
+    # Využívá se plocha původních tlačítek s malou bezpečnostní rezervou,
+    # aby text vizuálně nekolidoval s dekorativním okrajem skinu.
     inner_x = max(3, int(8 * self.sx()))
     inner_y = max(2, int(5 * self.sy()))
 
@@ -6342,7 +6336,7 @@ def _caesar_ui_update_layout_positions(self):
 def _caesar_ui_apply_responsive_fonts(self):
     _CAESAR_UI_ORIGINAL_APPLY_RESPONSIVE_FONTS(self)
 
-    # Stejná optická velikost jako text původních tlačítek.
+    # Velikost textu je opticky sjednocená s původními akčními tlačítky.
     font = QFont("Georgia", self.fs(20), QFont.Bold)
     if hasattr(self, "caesar_direction_combo"):
         self.caesar_direction_combo.setFont(font)
@@ -6357,8 +6351,8 @@ def _caesar_ui_apply_responsive_fonts(self):
 def _caesar_ui_update_controls_visibility(self):
     is_caesar = self.is_caesar_selected()
 
-    # U Caesarovy šifry tyto dvě oblasti slouží jako nastavení směru a posunu.
-    # U všech ostatních šifer zůstanou původní tlačítka.
+    # U Caesarovy šifry se dvě akční oblasti přepnou na konfiguraci směru a posunu.
+    # U ostatních šifer se zachová standardní režim tlačítek.
     if hasattr(self, "encrypt_button"):
         self.encrypt_button.setVisible(not is_caesar)
     if hasattr(self, "decrypt_button"):
@@ -6377,9 +6371,9 @@ def _caesar_ui_update_controls_visibility(self):
 
 
 def _caesar_ui_select_cipher(self, name):
-    # Nepoužíváme původní select_cipher přímo, protože ten při přepnutí šifry
-    # hned volá auto_encrypt_action ještě před tím, než se přepnou Caesarovy ovládací prvky.
-    # Tady nejdřív nastavíme viditelnost a až potom přepočítáme výsledek.
+    # Původní select_cipher se nepoužívá přímo, protože při změně šifry
+    # spouští auto_encrypt_action dříve, než se přepnou Caesarovy ovládací prvky.
+    # Nejprve se nastaví viditelnost prvků a až poté se přepočítá výsledek.
     self.selected_cipher = name
     self.refresh_cipher_styles()
     self.update_selected_header()
@@ -6453,10 +6447,10 @@ SifratorSkinWidget.decrypt_selected_cipher = _caesar_ui_decrypt_selected_cipher
 
 
 # ============================================================
-# TISK BUTTON PATCH
-# Přidá tlačítko TISK s ikonou icons/tiskarna.png.
-# Tlačítko vytiskne aktuálně zobrazený výsledek.
-# Funguje pro textový výstup i pro kreslené výstupy ve scrollovací oblasti.
+# ROZŠÍŘENÍ TISKU
+# Do rozhraní se doplňuje tlačítko TISK s ikonou icons/tiskarna.png.
+# Tlačítko spustí tisk aktuálně zobrazeného výsledku.
+# Podporován je textový výstup i grafické výstupy umístěné ve scrollovací oblasti.
 # ============================================================
 
 _PRINT_ORIGINAL_CREATE_WIDGETS = SifratorSkinWidget.create_widgets
@@ -6504,8 +6498,8 @@ def _print_update_layout_positions(self):
     _PRINT_ORIGINAL_UPDATE_LAYOUT_POSITIONS(self)
 
     if hasattr(self, "print_button"):
-        # Tlačítko je v pravé části nad výsledkem, aby nepřekáželo textu.
-        # Pozice se počítá z output_text, takže zůstane responzivní i při změně velikosti okna.
+        # Tlačítko je umístěné nad výsledkem tak, aby neomezovalo čitelnost výstupu.
+        # Pozice se odvozuje od output_text, proto zůstává responzivní při změně velikosti okna.
         out_rect = self.output_text.geometry()
         title_rect = self.result_title.geometry()
         btn_w = max(92, int(122 * self.sx()))
@@ -6526,7 +6520,7 @@ def _print_apply_responsive_fonts(self):
 
 
 def _print_find_visible_draw_widget(self):
-    """Najde právě zobrazený kreslený výstup vložený v QScrollArea."""
+    """Vrátí aktuálně viditelný grafický výstup umístěný ve scrollovací oblasti."""
     for name, widget in self.__dict__.items():
         if name == "scroll_area":
             continue
@@ -6540,7 +6534,7 @@ def _print_find_visible_draw_widget(self):
 
 
 def _print_current_result(self):
-    """Vytiskne aktuálně zobrazený výsledek."""
+    """Spustí tisk aktuálně zobrazeného textového nebo grafického výsledku."""
     try:
         from PySide6.QtPrintSupport import QPrinter, QPrintDialog
     except Exception as error:
@@ -6565,12 +6559,12 @@ def _print_current_result(self):
     if dialog.exec() != 1:
         return
 
-    # Běžné textové šifry tiskneme přímo z QTextEdit.
+    # Textové šifry se tisknou přímo z obsahu QTextEdit.
     if self.output_text.isVisible() and has_plain_text:
         self.output_text.print_(printer)
         return
 
-    # Kreslené šifry vytiskneme jako obrázek celého kreslicího widgetu.
+    # Grafické šifry se tisknou jako rastrový výstup celého vykreslovacího widgetu.
     if drawn_widget is not None:
         pixmap = drawn_widget.grab()
         if pixmap.isNull():
@@ -6610,7 +6604,7 @@ SifratorSkinWidget.print_current_result = _print_current_result
 
 
 # ============================================================
-# TISK – DIALOG S VOLBAMI
+# TISKOVÝ DIALOG S VOLBAMI
 # Po kliknutí na tlačítko TISK vyskočí okénko se zaškrtávátky:
 #   - klíč šifry
 #   - text k zašifrování
@@ -6751,7 +6745,7 @@ def _print_options_dialog(self, has_input: bool, has_output: bool):
 
 
 def _print_page_size_points(paper_name: str, orientation_name: str):
-    """Vrátí velikost stránky v typografických bodech (1/72 palce)."""
+    """Převede zvolený formát stránky na typografické body používané při tisku."""
     from PySide6.QtCore import QSizeF
 
     sizes = {
@@ -6776,7 +6770,7 @@ def _print_settings_value(settings: dict, key: str, default):
 
 
 def _print_crop_image_to_content(image: QImage, margin: int = 18) -> QImage:
-    """Ořízne prázdné okolí kresleného výstupu, aby šla měnit jeho velikost.
+    """Ořízne prázdné okolí grafického výstupu, aby šla měnit jeho velikost.
 
     Kreslené šifry jsou často vložené ve velkém widgetu. Bez ořezu vypadá
     samotný symbol pořád malý, i když se obrázek zvětšuje. Tady najdeme pixely,
@@ -6863,7 +6857,7 @@ def _print_image_on_white(image: QImage) -> QImage:
 
 
 def _print_image_black_on_white(image: QImage) -> QImage:
-    """Tiskový převod kreslené šifry na čistou černou na bílém papíru.
+    """Tiskový převod grafické šifry na čistou černou na bílém papíru.
 
     Používá se jen pro tisk. UI zůstane barevné/průhledné.
     """
@@ -7084,7 +7078,7 @@ SifratorSkinWidget.print_options_build_document = _print_options_build_document
 
 
 def _print_current_result_with_live_preview(self):
-    """Otevře plně modifikovatelný tematický náhled tisku."""
+    """Otevře tematický náhled tisku s možností úpravy rozvržení před tiskem."""
     try:
         from PySide6.QtPrintSupport import QPrinter, QPrintDialog
         from PySide6.QtGui import QPageSize, QPageLayout
@@ -7557,7 +7551,7 @@ SifratorSkinWidget.print_current_result = _print_current_result_with_live_previe
 # ============================================================
 
 def _fixed_get_logic_module_for_print_key(self):
-    """Vrátí stejný modul logiky, jaký používá tlačítko KLÍČ."""
+    """Vrátí modul logiky shodný s tím, který používá generování klíče šifry."""
     if hasattr(self, "get_selected_logic_module"):
         try:
             return self.get_selected_logic_module()
@@ -7567,7 +7561,7 @@ def _fixed_get_logic_module_for_print_key(self):
 
 
 def _fixed_key_image_file_url(path: str) -> str:
-    """Převede cestu k PNG na URL, kterou umí QTextDocument načíst v <img>."""
+    """Převede cestu k PNG souboru na URL vhodnou pro vložení do QTextDocument."""
     try:
         from pathlib import Path as _Path
         return _Path(path).resolve().as_uri()
@@ -7700,7 +7694,7 @@ _BINARY_ORIGINAL_SET_RESULT_OUTPUT = SifratorSkinWidget.set_result_output
 def _binary_squares_create_widgets(self):
     _BINARY_ORIGINAL_CREATE_WIDGETS(self)
 
-    # Vlastní kreslený výstup pro Binární čtverce.
+    # Vlastní grafický výstup pro Binární čtverce.
     self.binary_squares_canvas = _binary_squares_create_canvas(self)
     self.binary_squares_scroll = QScrollArea(self)
     self.binary_squares_scroll.setWidgetResizable(False)
@@ -7818,7 +7812,7 @@ SifratorSkinWidget.resize_binary_squares_canvas_to_content = _binary_squares_res
 
 
 def set_windows_app_id():
-    """Nastaví vlastní AppUserModelID, aby Windows nepoužil ikonu python.exe."""
+    """Nastaví vlastní Windows AppUserModelID pro správné zobrazení ikony aplikace."""
     if sys.platform.startswith("win"):
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -7943,9 +7937,10 @@ class SifratorWindow(QMainWindow):
 
 # Přesměrování na nový renderer vedle main.py.
 def get_pirate_key_renderer_file():
-    """Vrátí cestu ke společnému generátoru klíčů.
+    """Vyhledá společný modul pro generování grafických klíčů šifer.
 
-    Podporuje vývojové spuštění, Windows onedir build i macOS .app build.
+    Cesty jsou řazené tak, aby fungovaly ve vývoji, ve Windows onedir buildu
+    i v macOS .app balíčku.
     """
     candidates = [
         os.path.join(get_app_dir(), "pirate_key_renderer.py"),
@@ -8338,7 +8333,7 @@ def _print_cache_preload_now(self, token=None):
         if drawn_widget is not None:
             _print_cache_get_drawn_result_image(self, drawn_widget, force=False)
     except Exception as error:
-        print(f"CHYBA přednačítání kreslené šifry: {error}")
+        print(f"CHYBA přednačítání grafické šifry: {error}")
 
     # 4) Základní dokument náhledu tisku s výchozími volbami.
     try:
@@ -8502,7 +8497,7 @@ def _print_cache_preload_now(self, token=None):
 
     steps.append(preload_print_key)
 
-    # 2) Kreslený výsledek pro tisk – jen pokud je vidět kreslený výstup.
+    # 2) Kreslený výsledek pro tisk – jen pokud je vidět grafický výstup.
     def preload_drawn_result():
         if not token_valid():
             finish()
@@ -8512,7 +8507,7 @@ def _print_cache_preload_now(self, token=None):
             if drawn_widget is not None:
                 _print_cache_get_drawn_result_image(self, drawn_widget, force=False)
         except Exception as error:
-            print(f"CHYBA přednačítání kreslené šifry: {error}")
+            print(f"CHYBA přednačítání grafické šifry: {error}")
 
     steps.append(preload_drawn_result)
 
@@ -8566,13 +8561,13 @@ def _schedule_print_cache_preload(self, delay_ms: int = 1200):
 # NEMRZNOUCÍ TISK A KLÍČ – finální bezpečná vrstva
 # ============================================================
 # Důležité:
-# - kliknutí na TISK už nesmí nejdřív generovat klíč ani grabovat kreslený výstup.
+# - kliknutí na TISK už nesmí nejdřív generovat klíč ani grabovat grafický výstup.
 # - kliknutí na KLÍČ otevře dialog hned a teprve potom se klíč doplní.
 # - náhled tisku používá jen hotovou cache; když cache není, zobrazí text „připravuje se“.
 
 
 def _print_cache_peek_key_image_path(self, print_mode: bool = True) -> str:
-    """Vrátí jen hotový obrázek klíče z cache. Nikdy nic negeneruje."""
+    """Vrátí pouze již existující obrázek klíče z cache bez spouštění generování."""
     try:
         if not getattr(self, "selected_cipher", None):
             return ""
@@ -8592,7 +8587,7 @@ def _print_cache_peek_key_image_path(self, print_mode: bool = True) -> str:
 
 
 def _print_cache_peek_drawn_result_image(self, drawn_widget=None) -> QImage:
-    """Vrátí jen hotový kreslený výsledek z cache. Nikdy nevolá grab()."""
+    """Vrátí pouze již připravený grafický výsledek z cache bez volání grab()."""
     try:
         if drawn_widget is None:
             drawn_widget = self.print_find_visible_draw_widget() if hasattr(self, "print_find_visible_draw_widget") else None
@@ -8691,4 +8686,3 @@ if __name__ == "__main__":
     window.show()
 
     sys.exit(app.exec())
-
