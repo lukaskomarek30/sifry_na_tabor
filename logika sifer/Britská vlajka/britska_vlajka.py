@@ -1,16 +1,23 @@
-# ============================================================
-# Britská vlajka - logika + kreslení přes QPainter se scrollováním
-# Umístění:
-# C:\Users\lukas\Desktop\Šifry\logika sifer\Britská vlajka\britska_vlajka.py
-#
-# Tento soubor obsahuje:
-# - encrypt/decrypt
-# - BritishFlagOutputWidget pro kreslený výstup
-#
-# Když je výsledek delší než rámeček, widget si zvětší výšku.
-# main.py ho musí mít vložený v QScrollArea.
-# ============================================================
+"""Implementace šifry Britská vlajka pro Šifrátor Mraveniště.
 
+Modul obsahuje textovou logiku šifry a Qt widget pro grafické vykreslení
+výsledku pomocí QPainteru. Každé písmeno je reprezentované sadou čar,
+které se kreslí podle předdefinovaných segmentů v rámci jedné buňky.
+
+Umístění v projektu:
+    logika sifer/Britská vlajka/britska_vlajka.py
+
+Hlavní části modulu:
+- normalize_text(text) připraví text pro interní zpracování,
+- encrypt(text) převede vstup do normalizovaného tvaru pro kreslení,
+- decrypt(text) zpracuje interní textový zápis zpět do normalizovaného textu,
+- BritishFlagOutputWidget vykresluje šifru do responzivního Qt widgetu.
+
+Widget je navržený pro vložení do QScrollArea. Při delším výsledku si
+automaticky přepočítá potřebnou výšku, aby bylo možné výstup plynule posouvat.
+"""
+
+# Unicode normalizace se používá pro odstranění diakritiky před šifrováním.
 import unicodedata
 
 from PySide6.QtCore import Qt, QPointF, QRectF, QTimer
@@ -19,18 +26,27 @@ from PySide6.QtWidgets import QWidget
 
 
 def normalize_text(text: str) -> str:
+    """Normalizuje vstupní text na velká písmena bez diakritiky.
+
+    Šifra pracuje s mapováním A–Z, proto se před vykreslením odstraní
+    diakritika a text se převede na jednotný velký tvar.
+    """
     normalized = unicodedata.normalize("NFKD", text)
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return normalized.upper()
 
 
 def encrypt(text: str) -> str:
-    """Připraví text pro kreslenou šifru Britská vlajka."""
+    """Vrátí normalizovaný text určený pro vykreslení šifry Britská vlajka."""
     return normalize_text(text)
 
 
 def decrypt(text: str) -> str:
-    """Dešifrování pro textový / interní zápis."""
+    """Převede textový nebo interní zápis zpět do normalizovaného textu.
+
+    Funkce podporuje i jednoduchý tokenový zápis ve tvaru [A], který se může
+    objevit při interní práci s jednotlivými znaky.
+    """
     cleaned = text.strip()
 
     if not cleaned:
@@ -57,6 +73,8 @@ def decrypt(text: str) -> str:
     return normalize_text("".join(result))
 
 
+# Normalizované segmenty jedné kreslicí buňky.
+# Souřadnice jsou uvedené relativně v rozsahu 0–1, aby bylo možné buňku libovolně škálovat.
 SEGMENTS = {
     "top": ((0.12, 0.16), (0.88, 0.16)),
     "mid": ((0.12, 0.50), (0.88, 0.50)),
@@ -80,8 +98,10 @@ SEGMENTS = {
 }
 
 
-# Segmenty pro jednotlivá písmena podle klíče.
-LETTER_SEGMENTS = {
+# Mapování písmen na segmenty podle grafického klíče šifry.
+LETTER_# Normalizované segmenty jedné kreslicí buňky.
+# Souřadnice jsou uvedené relativně v rozsahu 0–1, aby bylo možné buňku libovolně škálovat.
+SEGMENTS = {
     "A": ["diag_down", "diag_up", "mid"],
     "B": ["top", "mid", "bot", "left", "right", "tl_c"],
     "C": ["diag_down", "diag_up", "center", "c_r"],
@@ -112,10 +132,11 @@ LETTER_SEGMENTS = {
 
 
 class BritishFlagOutputWidget(QWidget):
-    """Kreslený výstup šifry Britská vlajka.
+    """Qt widget pro vykreslení šifry Britská vlajka.
 
-    Widget je určený k vložení do QScrollArea.
-    Když je text delší než viditelný rámeček, automaticky si zvětší výšku.
+    Widget je určený pro použití uvnitř QScrollArea. Na základě aktuální
+    šířky a délky textu si automaticky dopočítává minimální výšku, aby se
+    dlouhý výstup neztrácel mimo viditelnou oblast.
     """
 
     def __init__(self, parent=None):
@@ -127,17 +148,20 @@ class BritishFlagOutputWidget(QWidget):
         self.setMinimumHeight(180)
 
     def set_scale(self, scale: float):
+        """Nastaví měřítko vykreslení a přepočítá velikost obsahu."""
         self.scale_value = max(0.55, float(scale))
         self.update_content_size()
         self.update()
 
     def set_cipher_text(self, text: str):
+        """Nastaví text pro vykreslení a aktualizuje rozměry widgetu."""
         self.cipher_text = normalize_text(text)
         self.update_content_size()
         QTimer.singleShot(0, self.update_content_size)
         self.update()
 
     def clear(self):
+        """Vymaže aktuální obsah widgetu."""
         self.cipher_text = ""
         self.update_content_size()
         self.update()
@@ -147,6 +171,7 @@ class BritishFlagOutputWidget(QWidget):
         self.update_content_size()
 
     def get_cell_metrics(self):
+        """Vrátí rozměry buňky a mezery odvozené od aktuálního měřítka."""
         cell_w = max(34, int(58 * self.scale_value))
         cell_h = max(24, int(40 * self.scale_value))
         letter_gap = max(8, int(12 * self.scale_value))
@@ -155,6 +180,7 @@ class BritishFlagOutputWidget(QWidget):
         return cell_w, cell_h, letter_gap, word_gap, line_gap
 
     def char_width(self, char: str) -> int:
+        """Vrátí šířku potřebnou pro vykreslení jednoho znaku."""
         cell_w, _, _, _, _ = self.get_cell_metrics()
 
         if char in LETTER_SEGMENTS:
@@ -163,6 +189,7 @@ class BritishFlagOutputWidget(QWidget):
         return max(18, int(24 * self.scale_value) + 10)
 
     def calculate_required_height(self, available_width: int) -> int:
+        """Spočítá potřebnou výšku widgetu podle dostupné šířky a délky textu."""
         margin_left = 12
         margin_right = 12
         margin_top = 8
@@ -198,10 +225,11 @@ class BritishFlagOutputWidget(QWidget):
         return max(170, y + cell_h + margin_top + margin_bottom)
 
     def update_content_size(self):
+        """Aktualizuje minimální velikost widgetu podle aktuálního obsahu a šířky viewportu."""
         parent = self.parentWidget()
         width = self.width()
 
-        # Když je widget vložený v QScrollArea, parent je viewport.
+        # Při vložení do QScrollArea je parent typicky viewport, jehož šířka určuje reálný kreslicí prostor.
         if parent is not None and parent.width() > 20:
             width = parent.width()
 
@@ -213,6 +241,7 @@ class BritishFlagOutputWidget(QWidget):
             self.resize(width, needed_height)
 
     def paintEvent(self, event):
+        """Vykreslí celý zašifrovaný text do aktuální plochy widgetu."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
@@ -245,7 +274,7 @@ class BritishFlagOutputWidget(QWidget):
                 x = rect.left()
                 y += cell_h + line_gap
 
-            # Tady už není break. Výsledek se kreslí dál a QScrollArea umožní scrollovat.
+            # Kreslení pokračuje i mimo původní viditelnou oblast; posun zajišťuje nadřazená QScrollArea.
 
             if char in LETTER_SEGMENTS:
                 self.draw_letter(painter, QRectF(x, y, cell_w, cell_h), char)
@@ -255,12 +284,14 @@ class BritishFlagOutputWidget(QWidget):
                 x += char_w + letter_gap
 
     def draw_symbol(self, painter: QPainter, rect: QRectF, symbol: str):
+        """Vykreslí znak, který není definovaný v mapě segmentů."""
         font = QFont("Georgia", max(14, int(24 * self.scale_value)), QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor("#f3d79a"))
         painter.drawText(rect, Qt.AlignCenter, symbol)
 
     def draw_letter(self, painter: QPainter, rect: QRectF, letter: str):
+        """Vykreslí jedno písmeno jako sadu čar podle segmentové mapy."""
         shadow_pen = QPen(QColor(0, 0, 0, 150))
         shadow_pen.setWidthF(max(1.3, rect.height() * 0.075))
         shadow_pen.setCapStyle(Qt.RoundCap)
@@ -278,6 +309,7 @@ class BritishFlagOutputWidget(QWidget):
 
         segments = LETTER_SEGMENTS.get(letter, [])
 
+        # Písmeno se kreslí ve třech vrstvách: stín, hlavní čára a světlý vnitřní tah.
         for pen, offset in (
             (shadow_pen, QPointF(1.4, 1.4)),
             (main_pen, QPointF(0, 0)),
@@ -297,6 +329,7 @@ class BritishFlagOutputWidget(QWidget):
                 ) + offset
                 painter.drawLine(p1, p2)
 
+        # Středový uzel vizuálně sjednocuje jednotlivé segmenty písmene.
         node_size = max(3.0, rect.height() * 0.10)
         center = QPointF(
             rect.left() + 0.5 * rect.width(),
