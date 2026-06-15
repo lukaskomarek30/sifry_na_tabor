@@ -1,19 +1,20 @@
-"""Logika šifry Brailovo písmo pro Šifrátor Mraveniště.
+"""Implementace šifry Braillovo písmo pro Šifrátor Mraveniště.
+
+Modul zajišťuje převod běžného textu do vizuální braillovy mřížky
+a zpětné dešifrování výstupu vytvořeného funkcí encrypt(). Součástí
+souboru je také volitelný Qt widget připravený pro kreslené zobrazení
+v hlavním aplikačním rozhraní.
 
 Umístění v projektu:
     logika sifer/Brailovo písmo/brailovo_pismo.py
 
-Co modul umí:
-- encrypt(text)  -> převede text na vizuální braillovu mřížku z koleček
-- decrypt(text)  -> umí přečíst výstup vytvořený funkcí encrypt()
-- symboly ?, . , - ! : ; / ( ) apod. zůstávají jako symboly
-- podporuje česká písmena podle přiloženého klíče: Á, Č, Ď, É, Ě, Í, Ň, Ó, Ř, Š, Ť, Ú, Ů, Ý, Ž
-- čísla se zapisují jako braillovský číselný znak + A-J, takže mají šířku 4 sloupce
-
-Poznámka:
-Soubor obsahuje i třídu BrailleOutputWidget pro případné budoucí napojení na kreslený
-Qt výstup stejně jako Britská vlajka. Aktuální main.py ale zatím Braillovo písmo zobrazuje
-přes běžné QTextEdit pole, takže hlavní jsou funkce encrypt/decrypt.
+Hlavní vlastnosti:
+- encrypt(text) převádí text na třířádkový vizuální braillovský zápis,
+- decrypt(text) čte výstup vytvořený funkcí encrypt(),
+- běžná interpunkce a nepodporované symboly se ve výstupu zachovávají,
+- české znaky s diakritikou jsou podporované podle definované mapovací tabulky,
+- čísla se zapisují jako číselný prefix následovaný odpovídajícím znakem A–J,
+- logika šifry je oddělená od Qt widgetu, aby ji bylo možné používat i bez PySide6.
 """
 
 from __future__ import annotations
@@ -21,20 +22,22 @@ from __future__ import annotations
 import unicodedata
 from typing import Iterable, List, Sequence, Tuple, Union
 
+# Typové aliasy zpřehledňují práci s braillovými body a symbolickými částmi znaků.
 DotTuple = Tuple[int, ...]
 GlyphPart = Union[DotTuple, str]
 
+# Vizuální symboly a mezery používané v textovém výstupu šifry.
 FILLED = "●"
 EMPTY = "○"
 LETTER_GAP = " "
 WORD_GAP = "      "
 
-# Pozice braillova bodu:
+# Standardní rozložení bodů v braillově buňce:
 # 1 4
 # 2 5
 # 3 6
 #
-# Hodnoty níže odpovídají klíči z obrázku.
+# Mapování níže vychází z použitého klíče a zahrnuje i vybrané české znaky.
 CHAR_TO_DOTS: dict[str, DotTuple] = {
     "A": (1,),
     "Á": (1, 6),
@@ -79,9 +82,10 @@ CHAR_TO_DOTS: dict[str, DotTuple] = {
     "Ž": (2, 3, 4, 6),
 }
 
+# Reverzní mapa slouží pro převod braillových bodů zpět na znak při dešifrování.
 DOTS_TO_CHAR: dict[DotTuple, str] = {dots: char for char, dots in CHAR_TO_DOTS.items()}
 
-# Číselný znak v Braillově písmu: body 3, 4, 5, 6.
+# Číselný prefix v Braillově písmu používá body 3, 4, 5 a 6.
 NUMBER_PREFIX: DotTuple = (3, 4, 5, 6)
 DIGIT_TO_LETTER: dict[str, str] = {
     "1": "A",
@@ -95,22 +99,25 @@ DIGIT_TO_LETTER: dict[str, str] = {
     "9": "I",
     "0": "J",
 }
+# Reverzní mapování pro převod braillovské kombinace A–J zpět na číslici.
 LETTER_TO_DIGIT: dict[str, str] = {letter: digit for digit, letter in DIGIT_TO_LETTER.items()}
 
-# Znaky, které se nešifrují a zůstanou ve výstupu jako běžný symbol.
+# Znaky mimo mapovací tabulku, které se mají bezpečně zachovat jako běžný textový symbol.
 PASSTHROUGH_SYMBOLS = set("?.!,;:-_+/\\|()[]{}<>@#&%*=\"'„“‚‘`~^°\n\t")
 
 
 def _strip_accents(value: str) -> str:
+    """Odstraní diakritická znaménka pomocí Unicode normalizace."""
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
 def normalize_char(char: str) -> str:
-    """Převede znak na tvar použitelný v tabulce.
+    """Normalizuje vstupní znak do tvaru použitelného v mapovací tabulce.
 
-    Česká diakritika zůstane zachovaná, protože ji šifra podle klíče podporuje.
-    U ostatních diakritických znaků se použije základní písmeno.
+    Podporovaná česká diakritika se zachovává, protože má v klíči vlastní
+    braillovskou reprezentaci. Ostatní diakritické znaky se převádějí
+    na základní písmeno.
     """
     if not char:
         return char
@@ -127,6 +134,7 @@ def normalize_char(char: str) -> str:
 
 
 def dot_to_rows(dots: Sequence[int]) -> list[str]:
+    """Převede čísla aktivních bodů na tři textové řádky jedné braillovy buňky."""
     dots_set = set(dots)
     return [
         (FILLED if 1 in dots_set else EMPTY) + (FILLED if 4 in dots_set else EMPTY),
@@ -136,6 +144,7 @@ def dot_to_rows(dots: Sequence[int]) -> list[str]:
 
 
 def rows_to_dots(rows: Sequence[str]) -> DotTuple | None:
+    """Převede tři řádky jedné braillovy buňky zpět na čísla aktivních bodů."""
     if len(rows) != 3:
         return None
 
@@ -164,11 +173,11 @@ def rows_to_dots(rows: Sequence[str]) -> DotTuple | None:
 
 
 def glyph_parts_for_char(char: str) -> list[GlyphPart] | None:
-    """Vrátí části jednoho znaku.
+    """Vrátí interní reprezentaci jednoho vstupního znaku.
 
-    Písmeno má jednu braillovu buňku.
-    Číslo má dvě buňky: číselný znak + písmeno A-J.
-    Symbol se vrací jako běžný znak.
+    Písmeno je reprezentované jednou braillovou buňkou, číslo dvěma buňkami
+    ve tvaru číselný prefix + odpovídající znak A–J. Symboly se vracejí
+    jako běžný text, aby se při šifrování neztratila interpunkce.
     """
     if char.isdigit():
         letter = DIGIT_TO_LETTER[char]
@@ -185,13 +194,14 @@ def glyph_parts_for_char(char: str) -> list[GlyphPart] | None:
 
 
 def parts_to_rows(parts: Sequence[GlyphPart]) -> list[str]:
+    """Složí jednu nebo více částí znaku do třířádkové vizuální reprezentace."""
     rows = ["", "", ""]
 
     for part in parts:
         if isinstance(part, tuple):
             part_rows = dot_to_rows(part)
         else:
-            # Symbol necháme jako symbol. Zobrazí se uprostřed výšky braillovy buňky.
+            # Symbol se zachová jako text a zarovná se do prostředního řádku výšky braillovy buňky.
             symbol = part if part != "\t" else "    "
             width = max(1, len(symbol))
             part_rows = [" " * width, symbol, " " * width]
@@ -203,10 +213,11 @@ def parts_to_rows(parts: Sequence[GlyphPart]) -> list[str]:
 
 
 def encrypt(text: str) -> str:
-    """Zašifruje text do vizuálního Braillova písma.
+    """Zašifruje text do vizuálního zápisu Braillova písma.
 
-    Výstup jsou tři řádky pro každý textový řádek. Písmena ve slově navazují vedle sebe,
-    mezi slovy je větší mezera a symboly zůstávají jako symboly.
+    Každý vstupní textový řádek se převede na tři výstupní řádky. Písmena
+    ve slově na sebe navazují, mezi slovy je širší mezera a interpunkce
+    zůstává zachovaná jako běžný symbol.
     """
     if text is None:
         return ""
@@ -219,7 +230,7 @@ def encrypt(text: str) -> str:
 
         for char in source_line:
             if char.isspace():
-                # Více mezer po sobě nedělá nekonečnou mezeru, stačí jedna mezera mezi slovy.
+                # Vícenásobné mezery se normalizují na jednu oddělovací mezeru mezi slovy.
                 if rows[0] and not rows[0].endswith(WORD_GAP):
                     for index in range(3):
                         rows[index] += WORD_GAP
@@ -228,7 +239,7 @@ def encrypt(text: str) -> str:
 
             parts = glyph_parts_for_char(char)
             if parts is None:
-                # Neznámý znak necháme jako běžný symbol, aby se nic neztratilo.
+                # Neznámý znak se zachová jako běžný symbol, aby se při převodu neztratila informace.
                 parts = [char]
 
             if pending_gap:
@@ -251,11 +262,11 @@ def encrypt(text: str) -> str:
 
 
 def _split_visual_segments(row0: str, row1: str, row2: str) -> list[tuple[str, list[str]]]:
-    """Rozdělí tři řádky zašifrovaného výstupu na segmenty.
+    """Rozdělí třířádkový vizuální zápis na dekódovatelné segmenty.
 
     Vrací položky:
-    - ("glyph", [r0, r1, r2]) pro znak
-    - ("space", []) pro mezeru mezi slovy
+    - ("glyph", [r0, r1, r2]) pro braillovu buňku nebo symbol,
+    - ("space", []) pro mezeru mezi slovy.
     """
     width = max(len(row0), len(row1), len(row2))
     rows = [row0.ljust(width), row1.ljust(width), row2.ljust(width)]
@@ -277,14 +288,15 @@ def _split_visual_segments(row0: str, row1: str, row2: str) -> list[tuple[str, l
                     segments.append(("space", []))
             continue
 
-        # Symbol, který je jen v prostředním řádku.
+        # Symboly jsou při šifrování ukládány pouze do prostředního řádku.
         if rows[0][col] == " " and rows[2][col] == " " and rows[1][col] not in (" ", FILLED, EMPTY):
             segments.append(("glyph", [" ", rows[1][col], " "]))
             col += 1
             continue
 
-        # Braillova buňka má šířku 2. Číslo má dvě buňky vedle sebe, tedy šířku 4.
-        # Tady bereme vždy buňku po buňce. Dvojice prefix + A-J se spojí až v decrypt().
+        # Braillova buňka má šířku 2 znaky.
+        # Čísla mají dvě buňky vedle sebe, ale zde se segmentují po jednotlivých buňkách.
+        # Spojení číselného prefixu s buňkou A–J probíhá až v decrypt().
         part = [rows[0][col:col + 2], rows[1][col:col + 2], rows[2][col:col + 2]]
         if all(len(row) == 2 for row in part):
             segments.append(("glyph", part))
@@ -296,6 +308,7 @@ def _split_visual_segments(row0: str, row1: str, row2: str) -> list[tuple[str, l
 
 
 def _decrypt_visual_block(row0: str, row1: str, row2: str) -> str:
+    """Dekóduje jeden třířádkový blok Braillova výstupu."""
     segments = _split_visual_segments(row0, row1, row2)
     result: list[str] = []
     index = 0
@@ -309,7 +322,7 @@ def _decrypt_visual_block(row0: str, row1: str, row2: str) -> str:
             index += 1
             continue
 
-        # Běžný symbol z prostředního řádku.
+        # Běžný symbol uložený v prostředním řádku.
         if value and len(value[0]) == 1 and len(value[1]) == 1 and len(value[2]) == 1:
             if value[1] not in (" ", FILLED, EMPTY):
                 result.append(value[1])
@@ -321,7 +334,7 @@ def _decrypt_visual_block(row0: str, row1: str, row2: str) -> str:
             index += 1
             continue
 
-        # Číslo: prefix 3456 + další buňka A-J.
+        # Číslo je reprezentované dvojicí buněk: prefix 3456 + znak A–J.
         if dots == NUMBER_PREFIX and index + 1 < len(segments):
             next_kind, next_value = segments[index + 1]
             next_dots = rows_to_dots(next_value) if next_kind == "glyph" else None
@@ -338,9 +351,10 @@ def _decrypt_visual_block(row0: str, row1: str, row2: str) -> str:
 
 
 def decrypt(text: str) -> str:
-    """Dešifruje výstup vytvořený funkcí encrypt().
+    """Dešifruje vizuální výstup vytvořený funkcí encrypt().
 
-    Funkce očekává třířádkový vizuální zápis z koleček. Symboly nechává jako symboly.
+    Funkce očekává třířádkový zápis složený z plných a prázdných koleček.
+    Symboly, které byly při šifrování ponechány jako text, se vracejí zpět beze změny.
     """
     if text is None:
         return ""
@@ -357,7 +371,7 @@ def decrypt(text: str) -> str:
             if buffer:
                 while len(buffer) < 3:
                     buffer.append("")
-                # Bereme vždy první tři řádky bloku. To odpovídá encrypt().
+                # Každý blok z encrypt() má tři řádky, proto se pro dekódování používá právě tato trojice.
                 result_lines.append(_decrypt_visual_block(buffer[0], buffer[1], buffer[2]))
                 buffer = []
             continue
@@ -371,14 +385,14 @@ def decrypt(text: str) -> str:
 
 
 # ------------------------------------------------------------
-# Volitelný kreslený Qt widget pro budoucí napojení do main.py
+# Volitelný Qt widget pro grafické vykreslení v aplikaci
 # ------------------------------------------------------------
 
 try:
     from PySide6.QtCore import Qt, QSize
     from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont
     from PySide6.QtWidgets import QWidget
-except Exception:  # pragma: no cover - aby šla logika použít i bez PySide6
+except Exception:  # pragma: no cover - textová logika musí zůstat použitelná i v prostředí bez PySide6
     QWidget = object  # type: ignore
     Qt = None  # type: ignore
     QSize = None  # type: ignore
@@ -390,10 +404,11 @@ except Exception:  # pragma: no cover - aby šla logika použít i bez PySide6
 
 
 class BrailleOutputWidget(QWidget):  # type: ignore[misc]
-    """Kreslený výstup Braillova písma.
+    """Qt widget pro grafické vykreslení Braillova písma.
 
-    Třída je připravená pro napojení podobně jako BritishFlagOutputWidget.
-    Aktuální main.py ji ale musí začít používat přes vlastní QScrollArea.
+    Třída je připravená pro napojení do hlavního UI podobně jako ostatní
+    kreslené šifry. Pro správné zobrazení v aplikaci je vhodné widget vložit
+    do vlastní QScrollArea a řídit jeho dostupnou šířku.
     """
 
     def __init__(self, parent=None):
@@ -409,7 +424,7 @@ class BrailleOutputWidget(QWidget):  # type: ignore[misc]
         self.update()
 
     def set_cipher_text(self, text: str) -> None:
-        # Když main.py pošle už zašifrovanou mřížku, zkusíme ji vrátit na text a kreslit čistě.
+        # Pokud hlavní aplikace předá už zašifrovanou mřížku, widget ji nejdříve převede zpět na text a vykreslí čistou podobu.
         if FILLED in str(text) or EMPTY in str(text):
             plain = decrypt(text)
         else:
@@ -418,7 +433,7 @@ class BrailleOutputWidget(QWidget):  # type: ignore[misc]
         self.update_content_size()
         self.update()
 
-    def setText(self, text: str) -> None:  # kompatibilita s main.py
+    def setText(self, text: str) -> None:  # kompatibilita s očekávaným rozhraním v main.py
         self.set_cipher_text(text)
 
     def sizeHint(self):
@@ -527,7 +542,7 @@ class BrailleOutputWidget(QWidget):  # type: ignore[misc]
 
 
 def get_key_data() -> dict:
-    """Vrátí data pro společný pirátský generátor klíčů."""
+    """Vrátí datovou strukturu pro společný generátor grafického klíče šifry."""
     items = [(char, dots) for char, dots in CHAR_TO_DOTS.items()]
     for digit in "1234567890":
         letter = DIGIT_TO_LETTER[digit]
@@ -543,6 +558,7 @@ def get_key_data() -> dict:
     }
 
 
+# Jednoduchý ruční test modulu při samostatném spuštění souboru.
 if __name__ == "__main__":
     sample = "Ahoj jak se máš? 123"
     encrypted = encrypt(sample)
