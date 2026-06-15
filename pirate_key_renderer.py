@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Univerzální pirátský generátor klíčů pro Šifrátor Mraveniště.
+"""Renderer a generátor klíčů šifer pro aplikaci Šifrátor Mraveniště.
 
-Umístění:
-    C:\\Users\\lukas\\Desktop\\Šifry\\pirate_key_renderer.py
+Modul zajišťuje jednotné vytvoření, vykreslení a export klíčů pro
+textové i grafické šifry. Slouží jako společná vrstva mezi logikou
+jednotlivých šifer a jejich vizuální prezentací v PySide6.
 
-Cíl:
-- tlačítko KLÍČ má fungovat u všech šifer,
-- kreslené šifry se v klíči ukazují jako skutečné obrázky/symboly,
-- běžné textové šifry se složí z jejich tabulek,
-- klíč je responzivní a při tisku se vkládá jako PNG.
+Podporované oblasti:
+- sestavení dat klíče z modulu konkrétní šifry,
+- vykreslení tabulkových, obrázkových a widgetových klíčů,
+- export klíče do PNG pro tisk nebo další použití,
+- cachování renderovaných symbolů pro rychlejší práci aplikace,
+- neblokující otevření dialogu klíče v uživatelském rozhraní.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 # ============================================================
-# Pomocné funkce
+# Pomocné nástroje pro normalizaci dat a kreslení
 # ============================================================
 
 def _normalize_items(items: Iterable[Any]) -> list[dict[str, Any]]:
@@ -128,7 +130,7 @@ def _pixmap_from_base64(data: str) -> QPixmap:
 
 
 def _crop_pixmap_to_content(pixmap: QPixmap, margin: int = 8) -> QPixmap:
-    """Ořízne průhledné okraje. Důležité pro kreslené symboly, aby nebyly malé."""
+    """Odstraní průhledné okraje pixmapy a zachová definovaný ochranný okraj."""
     if pixmap.isNull():
         return pixmap
 
@@ -161,10 +163,10 @@ def _crop_pixmap_to_content(pixmap: QPixmap, margin: int = 8) -> QPixmap:
 
 
 def _make_pixmap_black(pixmap: QPixmap, threshold: int = 5) -> QPixmap:
-    """Přebarví neprůhledné části obrázku na černou.
+    """Převede neprůhledné části pixmapy na černou barvu se zachováním alfa kanálu.
 
-    Používá se jen v generovaném KLÍČI, aby byly symboly na pergamenu dobře čitelné.
-    Průhledné pozadí zůstane průhledné.
+    Funkce sjednocuje vzhled symbolů v generovaném klíči a zajišťuje
+    dostatečný kontrast na pergamenovém i tiskovém pozadí.
     """
     if pixmap.isNull():
         return pixmap
@@ -179,7 +181,7 @@ def _make_pixmap_black(pixmap: QPixmap, threshold: int = 5) -> QPixmap:
             color = image.pixelColor(x, y)
             alpha = color.alpha()
             if alpha > threshold:
-                # Ponecháme jemné okraje, ale uděláme je dost viditelné.
+                # Zachová se antialiasing okrajů, zároveň se zvýší jejich kontrast.
                 new_alpha = max(alpha, 230)
                 image.setPixelColor(x, y, QColor(0, 0, 0, new_alpha))
             else:
@@ -213,7 +215,7 @@ def _find_output_widget_class(module: Any):
 
 
 def _labels_from_module(module: Any) -> list[str]:
-    """Najde rozumné znaky pro vizuální klíč."""
+    """Vrátí vhodnou sadu znaků použitelnou pro vizuální klíč."""
     if module is None:
         return list(ALPHABET)
 
@@ -227,7 +229,7 @@ def _labels_from_module(module: Any) -> list[str]:
         value = getattr(module, attr, None)
         if isinstance(value, dict) and value:
             keys = [str(k) for k in value.keys()]
-            # pro klíč preferujeme písmena A-Z, čísla až za nimi
+            # Pro klíč mají přednost písmena A–Z, čísla a ostatní znaky následují až poté.
             letters = [k for k in keys if len(k) <= 2 and any(ch.isalpha() for ch in k)]
             digits = [k for k in keys if k.isdigit()]
             others = [k for k in keys if k not in letters and k not in digits and not k.startswith("REVERSE")]
@@ -252,7 +254,7 @@ def _generic_data(cipher_name: str, mapping: dict[Any, Any], description: str = 
 
 
 # ============================================================
-# Widget klíče
+# Widget pro vykreslení klíče
 # ============================================================
 
 class PirateKeyWidget(QWidget):
@@ -319,8 +321,8 @@ class PirateKeyWidget(QWidget):
         rect = self.rect()
 
         if self.print_mode:
-            # Tiskový režim: žádný pergamen, žádné zlaté pozadí.
-            # Vykresluje se jen černý klíč na bílý papír.
+            # Tiskový režim používá čisté bílé pozadí bez dekorativních prvků.
+            # Výstup je optimalizovaný pro černobílý tisk.
             painter.fillRect(rect, WHITE)
             outer = rect.adjusted(12, 12, -12, -12)
         else:
@@ -395,10 +397,10 @@ class PirateKeyWidget(QWidget):
             self._draw_cell(painter, QRect(x, y, w, int(cell_h)), item)
 
     def _draw_zlomky_key(self, painter: QPainter, outer: QRect) -> None:
-        """Vykreslí klíč šifry Zlomky přesně jako tabulku ze vzoru.
+        """Vykreslí speciální tabulkový klíč pro šifru Zlomky.
 
-        Horní řádek = písmena, prostřední řádek = čitatel 1–5,
-        spodní řádek = jmenovatel / číslo skupiny 1–5.
+        Tabulka respektuje strukturu klíče: horní řádek obsahuje písmena,
+        prostřední řádek čitatele a spodní řádek čísla skupin.
         """
         groups = self.key_data.get("groups") or [
             list("ABCDE"),
@@ -412,7 +414,7 @@ class PirateKeyWidget(QWidget):
         top = outer.top() + 170
         width = outer.width() - 84
 
-        # Responzivní výšky řádků.
+        # Výšky řádků jsou pevně definované kvůli konzistentnímu vzhledu tabulky.
         letter_h = 38
         numerator_h = 36
         denominator_h = 42
@@ -426,11 +428,11 @@ class PirateKeyWidget(QWidget):
         group_count = max(1, len(groups))
         group_w = width / group_count
 
-        # Bílé/krémové pozadí tabulky, aby šlo dobře tisknout i číst.
+        # Podklad tabulky je zvolený tak, aby byl čitelný v UI i při tisku.
         table_rect = QRect(int(left), int(top), int(width), int(table_h))
         painter.fillRect(table_rect, WHITE if self.print_mode else QColor("#fff1c9"))
 
-        # Vnější rámeček a vodorovné čáry.
+        # Vykreslení vnějšího rámečku a hlavních vodorovných oddělovačů.
         painter.setPen(QPen(GRID, 2))
         painter.drawRect(table_rect)
         painter.drawLine(int(left), int(y_numbers), int(left + width), int(y_numbers))
@@ -440,7 +442,7 @@ class PirateKeyWidget(QWidget):
             gx = left + group_index * group_w
             gx_i = int(gx)
 
-            # Silnější svislá čára mezi skupinami.
+            # Skupiny jsou oddělené výraznější svislou linkou.
             if group_index > 0:
                 painter.setPen(QPen(GRID, 3))
                 painter.drawLine(gx_i, int(top), gx_i, int(bottom))
@@ -448,13 +450,13 @@ class PirateKeyWidget(QWidget):
             col_count = max(1, len(letters))
             col_w = group_w / col_count
 
-            # Jemné svislé linky mezi písmeny v horní části.
+            # Jednotlivé znaky v horní části oddělují jemnější svislé linky.
             painter.setPen(QPen(GRID, 1))
             for col_index in range(1, col_count):
                 x = int(gx + col_index * col_w)
                 painter.drawLine(x, int(y_letters), x, int(y_denominator))
 
-            # Písmena a čitatele.
+            # Vykreslení písmen a jejich čitatelů.
             for col_index, letter in enumerate(letters):
                 x = int(gx + col_index * col_w)
                 w = int(col_w) + (1 if col_index == col_count - 1 else 0)
@@ -469,22 +471,22 @@ class PirateKeyWidget(QWidget):
                 painter.setFont(_fit_font(painter, num_rect.adjusted(2, 0, -2, 0), str(col_index + 1), 16, 9, QFont.Bold))
                 painter.drawText(num_rect, Qt.AlignCenter, str(col_index + 1))
 
-            # Jmenovatel přes celou skupinu.
+            # Jmenovatel se vykreslí přes celou šířku skupiny.
             denominator_rect = QRect(int(gx), int(y_denominator), int(group_w), int(denominator_h))
             painter.setPen(INK)
             painter.setFont(_fit_font(painter, denominator_rect.adjusted(2, 0, -2, 0), str(group_index + 1), 20, 11, QFont.Bold))
             painter.drawText(denominator_rect, Qt.AlignCenter, str(group_index + 1))
 
-        # Pojistka: pravá silná hrana.
+        # Doplnění pravé hrany kvůli přesnému uzavření tabulky.
         painter.setPen(QPen(GRID, 2))
         painter.drawLine(int(left + width), int(top), int(left + width), int(bottom))
 
 
     def _draw_vlcacka_key(self, painter: QPainter, outer: QRect) -> None:
-        """Vykreslí klíč Vlčácké šifry podle vzoru jako 3×3 skupiny.
+        """Vykreslí speciální klíč Vlčácké šifry jako mřížku 3×3 skupin.
 
-        Každá skupina má nahoře čísla 1–3, pod nimi písmena a dole číslo
-        skupiny 1–9. Znak CH se bere jako jeden znak.
+        Každá skupina obsahuje pozice 1–3, odpovídající písmena a číslo
+        skupiny 1–9. Sekvence CH je zpracovaná jako jeden znak.
         """
         groups = self.key_data.get("groups") or [
             ("1", ["A", "B", "C"]),
@@ -504,7 +506,7 @@ class PirateKeyWidget(QWidget):
                 group_number = str(item[0])
                 letters_source = item[1]
                 if isinstance(letters_source, str):
-                    # Pozor: CH je jeden znak, proto ho v textovém fallbacku ošetříme.
+                    # Sekvence CH se v této šifře zpracovává jako jeden samostatný znak.
                     letters_source = letters_source.replace("CH", "#")
                     letters = [("CH" if ch == "#" else ch) for ch in letters_source]
                 else:
@@ -520,7 +522,7 @@ class PirateKeyWidget(QWidget):
                 ("7", ["R", "S", "T"]), ("8", ["U", "V", "W"]), ("9", ["X", "Y", "Z"]),
             ]
 
-        # Rozměry tabulky – drží se uprostřed a je responzivní.
+        # Rozměry tabulky jsou centrované a přizpůsobené dostupnému prostoru.
         top = outer.top() + 170
         available_w = outer.width() - 120
         available_h = outer.height() - 230
@@ -528,7 +530,7 @@ class PirateKeyWidget(QWidget):
         table_h = max(300, min(available_h, int(table_w * 0.52)))
         left = outer.center().x() - table_w // 2
 
-        # Když je okno nízké, použijeme dostupné maximum a neposíláme kresbu mimo rámeček.
+        # Při omezené výšce se tabulka zmenší tak, aby zůstala uvnitř rámečku.
         if top + table_h > outer.bottom() - 45:
             table_h = max(260, outer.bottom() - 45 - top)
             table_w = min(available_w, int(table_h * 1.75))
@@ -537,11 +539,11 @@ class PirateKeyWidget(QWidget):
         group_w = table_w / 3.0
         group_h = table_h / 3.0
 
-        # Jemné světlé pozadí tabulky.
+        # Světlý podklad zlepšuje čitelnost obsahu tabulky.
         table_rect = QRect(int(left), int(top), int(table_w), int(table_h))
         painter.fillRect(table_rect, WHITE if self.print_mode else QColor("#fff1c9"))
 
-        # Linky 3×3 – podle vzoru výrazné černé/hnědé čáry.
+        # Mřížka 3×3 používá výrazné linky odpovídající vizuálnímu vzoru klíče.
         painter.setPen(QPen(BLACK, 3))
         for i in range(4):
             x = int(left + i * group_w)
@@ -559,7 +561,7 @@ class PirateKeyWidget(QWidget):
             gx = left + col * group_w
             gy = top + row * group_h
 
-            # Vnitřní pozice ve skupině: 1,2,3 nahoře a písmena pod nimi.
+            # V každé skupině jsou nahoře pozice 1–3 a pod nimi příslušná písmena.
             for pos in range(3):
                 cx = gx + (pos + 0.5) * (group_w / 3.0)
 
@@ -585,7 +587,7 @@ class PirateKeyWidget(QWidget):
                 painter.setFont(_fit_font(painter, letter_rect, letter, 18 if letter != "CH" else 15, 9, QFont.Bold))
                 painter.drawText(letter_rect, Qt.AlignCenter, letter)
 
-            # Číslo skupiny dole uprostřed.
+            # Číslo skupiny je umístěné ve spodní části buňky.
             denominator_rect = QRect(
                 int(gx),
                 int(gy + group_h * 0.64),
@@ -702,8 +704,8 @@ class PirateKeyWidget(QWidget):
         target = body.adjusted(8, 8, -8, -8)
         scaled = pixmap.scaled(target.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-        # Pokud je symbol po poměrovém škálování pořád moc nízký, zvětšíme ho podle výšky
-        # a případně ho omezíme na šířku buňky. To pomáhá hlavně u Morseových variant.
+        # Pokud je symbol po zachování poměru stran příliš nízký, upraví se podle výšky
+        # a následně se omezí podle šířky buňky. Tím se zlepší čitelnost hlavně u Morseových variant.
         min_h = int(target.height() * 0.42)
         if scaled.height() < min_h and pixmap.height() > 0:
             by_height = pixmap.scaledToHeight(min_h, Qt.SmoothTransformation)
@@ -717,11 +719,11 @@ class PirateKeyWidget(QWidget):
     def _render_visual_symbol(self, label: str, body: QRect) -> QPixmap:
         try:
             widget = self.widget_class()
-            # Velký pracovní canvas, symbol potom ořízneme podle obsahu.
+            # Symbol se renderuje do větší pracovní plochy a následně se ořízne podle obsahu.
             work_w = max(360, int(body.width() * 3.0))
             work_h = max(220, int(body.height() * 2.4))
 
-            # Kreslené šifry mají vlastní měřítko. Pro klíč ho zvedneme.
+            # Kreslené šifry používají vlastní měřítko, které se pro klíč přizpůsobí velikosti buňky.
             if hasattr(widget, "set_scale"):
                 scale = max(1.15, min(3.0, body.height() / 72.0))
                 try:
@@ -827,11 +829,11 @@ class PirateKeyDialog(QDialog):
 
 
 # ============================================================
-# Vytvoření dat klíče pro všechny šifry
+# Sestavení datových modelů klíčů pro jednotlivé šifry
 # ============================================================
 
 def _make_vlcacka_key_data(cipher_name: str, module: Any) -> dict[str, Any] | None:
-    """Vrátí speciální klíč pro Vlčáckou šifru jako 3×3 tabulku."""
+    """Vytvoří datový model pro speciální tabulkový klíč Vlčácké šifry."""
     name = (cipher_name or "").strip().lower()
     groups = getattr(module, "GROUPS", None)
     has_char_to_code = isinstance(getattr(module, "CHAR_TO_CODE", None), dict)
@@ -872,10 +874,10 @@ def _make_vlcacka_key_data(cipher_name: str, module: Any) -> dict[str, Any] | No
 
 
 def _make_zlomky_key_data(cipher_name: str, module: Any) -> dict[str, Any] | None:
-    """Vrátí speciální klíč pro šifru Zlomky.
+    """Vytvoří datový model pro speciální tabulkový klíč šifry Zlomky.
 
-    Nepoužívá kreslicí OutputWidget, protože ten pro běžné písmeno A vykreslí prostě A.
-    Klíč musí být jako tabulka A–E / 1–5 / 1 podle vzoru.
+    Klíč se nesestavuje přes běžný OutputWidget, protože pro tuto šifru je
+    potřeba zachovat přesnou tabulkovou strukturu podle definovaného vzoru.
     """
     name = (cipher_name or "").strip().lower()
     has_zlomky_widget = hasattr(module, "ZlomkyOutputWidget")
@@ -923,7 +925,7 @@ def _make_visual_key_data(cipher_name: str, module: Any) -> dict[str, Any] | Non
     if widget_class is None:
         return None
 
-    # Binární čtverce a Braille mají hezčí speciální get_key_data(), takže je necháme být.
+    # Binární čtverce a Braille používají vlastní specializovaná data klíče.
     if hasattr(module, "LETTER_TO_BITS") or hasattr(module, "CHAR_TO_DOTS"):
         return None
 
@@ -943,7 +945,7 @@ def _make_visual_key_data(cipher_name: str, module: Any) -> dict[str, Any] | Non
 
 
 def _make_known_table_key_data(cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    # Caesarova šifra má být vždy podle aktuálního nastavení v UI.
+    # Caesarova šifra se generuje podle aktuálního nastavení v uživatelském rozhraní.
     if (cipher_name or '').strip().lower() == 'caesarova šifra' and hasattr(module, 'encrypt') and hasattr(module, 'ALPHABET'):
         alphabet = str(getattr(module, 'ALPHABET', ALPHABET)) or ALPHABET
         shift = 3
@@ -973,7 +975,7 @@ def _make_known_table_key_data(cipher_name: str, module: Any, context: dict[str,
             'items': _sort_items([(str(k), str(v)) for k, v in mapping.items()]),
         }
 
-    # Textové šifry bez vlastního kresleného výstupu.
+    # Textové šifry bez vlastního grafického výstupu.
     if hasattr(module, "MORSE_TABLE"):
         return _generic_data(cipher_name, getattr(module, "MORSE_TABLE"), "Morseova abeceda.")
 
@@ -989,7 +991,7 @@ def _make_known_table_key_data(cipher_name: str, module: Any, context: dict[str,
     if hasattr(module, "ENCRYPT_MAP"):
         return _generic_data(cipher_name, getattr(module, "ENCRYPT_MAP"), "Převod písmen podle klíče.")
 
-    # Caesar a Atbash často nemají hotový dict, vytvoříme ho ručně.
+    # Pokud modul neposkytuje hotovou tabulku, vytvoří se převodní mapa ručně.
     if hasattr(module, "ALPHABET") and hasattr(module, "encrypt"):
         alphabet = str(getattr(module, "ALPHABET", ALPHABET))
         mapping: dict[str, str] = {}
@@ -1005,7 +1007,7 @@ def _make_known_table_key_data(cipher_name: str, module: Any, context: dict[str,
 
 
 def _make_fallback_key_data(cipher_name: str, module: Any) -> dict[str, Any] | None:
-    # Nouzově najdeme první neprázdný slovník v modulu.
+    # Fallback vybere první použitelný neprázdný slovník z modulu šifry.
     best_name = ""
     best_dict = None
     preferred = (
@@ -1033,7 +1035,7 @@ def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, 
     if module is None:
         return None
 
-    # 1) Ručně připravený klíč v logice šifry.
+    # 1) Preferuje se ručně připravený klíč definovaný přímo v modulu šifry.
     if hasattr(module, "get_key_data"):
         try:
             data = module.get_key_data()
@@ -1044,7 +1046,7 @@ def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, 
         except Exception:
             pass
 
-    # 2) Jednoduchá tabulka get_key_table().
+    # 2) Pokud modul poskytuje get_key_table(), použije se jako jednoduchý tabulkový klíč.
     if hasattr(module, "get_key_table"):
         try:
             table = module.get_key_table()
@@ -1053,37 +1055,37 @@ def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, 
         except Exception:
             pass
 
-    # 3) Speciální ručně kreslený klíč pro Zlomky.
+    # 3) Speciální renderer pro šifru Zlomky.
     data = _make_zlomky_key_data(cipher_name, module)
     if data:
         return data
 
-    # 3b) Speciální ručně kreslený klíč pro Vlčáckou šifru.
+    # 4) Speciální renderer pro Vlčáckou šifru.
     data = _make_vlcacka_key_data(cipher_name, module)
     if data:
         return data
 
-    # 4) Obrázkové šifry – posunková, semafor, tančící figurky atd.
+    # 5) Obrázkové šifry využívající mapu předrenderovaných symbolů.
     data = _make_image_key_data(cipher_name, module)
     if data:
         return data
 
-    # 4) Kreslené šifry – klíč zobrazíme stejným OutputWidgetem jako výsledek.
+    # 6) Kreslené šifry se vykreslí stejným OutputWidgetem jako běžný výstup šifry.
     data = _make_visual_key_data(cipher_name, module)
     if data:
         return data
 
-    # 5) Známé textové tabulky.
+    # 7) Známé textové mapy a převodní tabulky.
     data = _make_known_table_key_data(cipher_name, module, context)
     if data:
         return data
 
-    # 6) Nouzový fallback, aby se už neukazovalo „klíč není dostupný“.
+    # 8) Nouzový fallback nad dostupnými slovníky v modulu.
     data = _make_fallback_key_data(cipher_name, module)
     if data:
         return data
 
-    # 7) Poslední pojistka – alespoň A-Z, aby dialog nikdy nespadl.
+    # 9) Poslední bezpečnostní fallback zobrazí základní abecedu.
     return {
         "title": f"Klíč šifry – {cipher_name}",
         "subtitle": "Šifrátor Mraveniště – pirátský klíč",
@@ -1137,7 +1139,7 @@ def save_key_png_for_module(cipher_name: str, module: Any, output_path: str, wid
 
 
 # ============================================================
-# RYCHLEJŠÍ RENDERER – GLOBÁLNÍ CACHE SYMBOLŮ A PNG KLÍČŮ
+# Optimalizační vrstva: globální cache symbolů a hotových PNG klíčů
 # ============================================================
 
 _GLOBAL_VISUAL_SYMBOL_CACHE = {}
@@ -1161,7 +1163,7 @@ try:
             return pixmap
         pixmap = _ORIGINAL_RENDER_VISUAL_SYMBOL_FAST(self, label, body)
         if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-            # Aby cache nerostla donekonečna.
+            # Limit velikosti cache chrání aplikaci před nadměrným využitím paměti.
             if len(_GLOBAL_VISUAL_SYMBOL_CACHE) > 900:
                 _GLOBAL_VISUAL_SYMBOL_CACHE.clear()
             _GLOBAL_VISUAL_SYMBOL_CACHE[cache_key] = pixmap
@@ -1232,14 +1234,15 @@ except Exception:
 
 
 # ============================================================
-# PŘEDNAČTENÍ KLÍČE PRO MAIN.PY
+# Přednačtení klíče pro použití v main.py
 # ============================================================
 
 def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1400) -> bool:
-    """Předpřipraví cache klíče bez otevírání dialogu.
+    """Předpřipraví cache klíče bez otevření dialogového okna.
 
-    Volá se z main.py přes QTimer po šifrování. Renderuje tiskovou i běžnou
-    variantu do dočasného souboru, čímž se zahřeje cache symbolů a PNG.
+    Funkce renderuje tiskovou i běžnou variantu klíče do dočasných souborů.
+    Tím se inicializuje cache symbolů i hotových PNG a následné otevření klíče
+    je výrazně rychlejší.
     """
     try:
         import tempfile
@@ -1252,11 +1255,11 @@ def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[st
         return False
 
 # ============================================================
-# NEMRZNOUCÍ OTEVŘENÍ KLÍČE
+# Neblokující otevření dialogu klíče
 # ============================================================
-# Dialog se otevře okamžitě s textem „Připravuji klíč…“.
-# Samotné sestavení a vykreslení klíče začne až po zobrazení okna.
-# Díky tomu kliknutí na KLÍČ nepůsobí jako zamrznutí aplikace.
+# Dialog se zobrazí okamžitě s informací o přípravě klíče.
+# Sestavení a vykreslení klíče proběhne až po inicializaci dialogu.
+# Uživatelské rozhraní tak zůstává responzivní i u náročnějších klíčů.
 
 class AsyncPirateKeyDialog(QDialog):
     def __init__(self, cipher_name: str, module: Any, context: dict[str, Any] | None = None, parent: QWidget | None = None):
@@ -1355,7 +1358,6 @@ def show_key_dialog_nonblocking(parent: QWidget | None, cipher_name: str, module
     dialog.exec()
     return True
 
-# Původní volání show_key_dialog také přesměrujeme na nemrznoucí variantu.
+# Původní veřejné API zůstává zachované a interně používá neblokující dialog.
 def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
     return show_key_dialog_nonblocking(parent, cipher_name, module, context)
-
