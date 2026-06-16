@@ -1,22 +1,24 @@
-"""Implementace šifry Vlčácká šifra pro Šifrátor Mraveniště.
+# -*- coding: utf-8 -*-
+"""Logika pro šifru Vlčácká šifra.
 
-Modul obsahuje logiku pro šifrování, dešifrování a případnou přípravu dat
-pro grafický klíč šifry. Kód je navržený tak, aby šel používat samostatně
-i jako součást hlavní aplikace.
-Modul je čistě textový a nevyžaduje grafické závislosti.
+Používá dvojčíselný zápis:
+- první číslo = skupina 1 až 9
+- druhé číslo = pozice znaku ve skupině 1 až 3
 
-Základní pravidla implementace:
-- vstupní text se před zpracováním normalizuje podle potřeb konkrétní šifry,
-- běžné mezery, interpunkce a nepodporované symboly se zachovávají tam,
-  kde to dává pro danou šifru smysl,
-- veřejné funkce encrypt() a decrypt() tvoří stabilní rozhraní pro main.py,
-- pomocné funkce jsou oddělené od UI vrstvy, aby se logika dala snadno testovat.
+Příklad:
+A = 11
+B = 12
+C = 13
+D = 21
+CH = 33
 """
+
+from __future__ import annotations
 
 import re
 import unicodedata
 
-GROUPS = {
+GROUPS: dict[str, list[str]] = {
     "1": ["A", "B", "C"],
     "2": ["D", "E", "F"],
     "3": ["G", "H", "CH"],
@@ -37,24 +39,24 @@ for group_number, letters in GROUPS.items():
         CHAR_TO_CODE[letter] = code
         CODE_TO_CHAR[code] = letter
 
-
-# Některé české znaky se přes NFKD nerozloží vždy tak, jak chceme.
 SPECIAL_TRANSLATION = str.maketrans({
-    "Đ": "D", "đ": "d",
-    "Ł": "L", "ł": "l",
+    "Đ": "D",
+    "đ": "d",
+    "Ł": "L",
+    "ł": "l",
 })
 
 
 def normalize_text(text: str) -> str:
     """Odstraní diakritiku a převede text na velká písmena."""
-    text = text.translate(SPECIAL_TRANSLATION)
+    text = str(text or "").translate(SPECIAL_TRANSLATION)
     normalized = unicodedata.normalize("NFKD", text)
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return normalized.upper()
 
 
 def tokenize_text(text: str) -> list[str]:
-    """Rozdělí text na tokeny. CH je jeden token."""
+    """Rozdělí text na tokeny. Dvojice CH se bere jako jeden znak."""
     text = normalize_text(text)
     tokens: list[str] = []
     index = 0
@@ -72,16 +74,7 @@ def tokenize_text(text: str) -> list[str]:
 
 
 def encrypt(text: str) -> str:
-    """Zašifruje text do Vlčácké šifry.
-
-    Příklad:
-        Ahoj jak se máš? -> 11 32 61 42  42 11 43  72 22  52 11 72?
-
-    Výstup:
-    - písmena ve slově mají mezi sebou jednu mezeru
-    - slova mají mezi sebou dvě mezery
-    - interpunkce zůstává připojená k místu, kde byla napsaná
-    """
+    """Zašifruje text do Vlčácké šifry."""
     tokens = tokenize_text(text)
     words: list[list[str]] = []
     current_word: list[str] = []
@@ -97,9 +90,6 @@ def encrypt(text: str) -> str:
             current_word.append(CHAR_TO_CODE[token])
             continue
 
-        # Symboly a nepodporované znaky ponecháme beze změny.
-        # Pokud je symbol za písmenem, připojí se k předchozímu kódu.
-        # Například S? -> 72?
         if current_word:
             current_word[-1] += token
         else:
@@ -129,19 +119,11 @@ def _decode_digit_run(run: str) -> str:
 
 
 def decrypt(text: str) -> str:
-    """Dešifruje Vlčáckou šifru zpět na text.
-
-    Podporuje nový zápis:
-        11 32 61 42  42 11 43  72 22  52 11 72?
-
-    A také starší kompaktní zápis:
-        11326142 421143 7222 521172?
-    """
-    cleaned = text.strip()
+    """Dešifruje Vlčáckou šifru zpět na text."""
+    cleaned = str(text or "").strip()
     if not cleaned:
         return ""
 
-    # Nový zápis: dvě a více mezer oddělují slova, jednoduché mezery uvnitř slov oddělují písmena.
     if re.search(r"\s{2,}", cleaned):
         raw_words = re.split(r"\s{2,}", cleaned)
         decoded_words: list[str] = []
@@ -151,20 +133,32 @@ def decrypt(text: str) -> str:
             if not raw_word:
                 continue
 
-            # Uvnitř slova ignorujeme jednoduché mezery mezi kódy.
             compact = re.sub(r"(?<=\d{2})\s+(?=\d{2})", "", raw_word)
             decoded_words.append(re.sub(r"\d+", lambda m: _decode_digit_run(m.group(0)), compact))
 
         return " ".join(decoded_words).strip()
 
-    # Pokud jsou v textu jednoduché mezery mezi dvojicemi, ale nejsou tam dvojité mezery,
-    # bereme je jako oddělovače písmen v jednom slově.
     if re.search(r"\d{2}\s+\d{2}", cleaned):
         compact = re.sub(r"(?<=\d{2})\s+(?=\d{2})", "", cleaned)
         return re.sub(r"\d+", lambda m: _decode_digit_run(m.group(0)), compact).strip()
 
-    # Starší standardní výstup: slova jsou oddělena jednou mezerou, uvnitř slov mezery nejsou.
-    return re.sub(r"\d+", lambda m: _decode_digit_run(m.group(0)), cleaned)
+    return re.sub(r"\d+", lambda m: _decode_digit_run(m.group(0)), cleaned).strip()
+
+
+def get_key_data() -> dict:
+    """Vrátí data pro univerzální renderer klíčů."""
+    items = []
+    for group_number, letters in GROUPS.items():
+        for index, letter in enumerate(letters, start=1):
+            items.append((letter, f"{group_number}{index}"))
+
+    return {
+        "title": "Klíč šifry – Vlčácká šifra",
+        "type": "generic",
+        "columns": 6,
+        "items": items,
+        "description": "První číslo je skupina, druhé číslo je pozice znaku ve skupině.",
+    }
 
 
 if __name__ == "__main__":
