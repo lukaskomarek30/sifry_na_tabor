@@ -25,6 +25,12 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  LC_ALL: "C.UTF-8"
+  LANG: "C.UTF-8"
+
 jobs:
   build:
     name: Build a test ${{ matrix.platform }}
@@ -89,6 +95,11 @@ jobs:
           def __github_actions_smoke_test():
               import os
               import sys
+              try:
+                  sys.stdout.reconfigure(encoding="utf-8")
+                  sys.stderr.reconfigure(encoding="utf-8")
+              except Exception:
+                  pass
 
               print("Smoke test: start")
               problems = []
@@ -118,14 +129,14 @@ jobs:
 
               logic_tests = [
                   ("Morseova abeceda", "get_morse_logic"),
-                  ("Binární čtverce", "get_binary_squares_logic"),
-                  ("Brailovo písmo", "get_braille_logic"),
-                  ("Britská vlajka", "get_british_flag_logic"),
-                  ("Caesarova šifra", "get_caesar_logic"),
-                  ("Mříž", "get_mriz_logic"),
+                  ("Binarni ctverce", "get_binary_squares_logic"),
+                  ("Brailovo pismo", "get_braille_logic"),
+                  ("Britska vlajka", "get_british_flag_logic"),
+                  ("Caesarova sifra", "get_caesar_logic"),
+                  ("Mriz", "get_mriz_logic"),
                   ("SuperKrychle", "get_superkrychle_logic"),
-                  ("Vlčácká šifra", "get_vlcacka_sifra_logic"),
-                  ("Zednářská šifra", "get_zednarska_sifra_logic"),
+                  ("Vlcacka sifra", "get_vlcacka_sifra_logic"),
+                  ("Zednarska sifra", "get_zednarska_sifra_logic"),
                   ("Zlomky", "get_zlomky_logic"),
               ]
 
