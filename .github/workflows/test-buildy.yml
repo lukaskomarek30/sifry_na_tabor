@@ -14,6 +14,12 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  LC_ALL: "C.UTF-8"
+  LANG: "C.UTF-8"
+
 defaults:
   run:
     shell: bash
@@ -92,6 +98,12 @@ jobs:
           # Normalni spusteni aplikace se tim nemeni.
           # ============================================================
           def run_smoke_test():
+              import sys
+              try:
+                  sys.stdout.reconfigure(encoding="utf-8")
+                  sys.stderr.reconfigure(encoding="utf-8")
+              except Exception:
+                  pass
               print("Smoke test: start")
               errors = []
           
@@ -119,7 +131,7 @@ jobs:
               check("Brailovo pismo", get_braille_logic)
               check("Caesarova sifra", get_caesar_logic)
               check("Mriz", get_mriz_logic)
-              check("Vlčácká šifra", get_vlcacka_sifra_logic)
+              check("Vlcacka sifra", get_vlcacka_sifra_logic)
               check("Zlomky", get_zlomky_logic)
           
               if errors:
