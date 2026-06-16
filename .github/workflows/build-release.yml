@@ -1,81 +1,180 @@
-# Workflow pro sestavení a vydání nové verze aplikace Šifrátor Mraveniště.
+# Workflow pro sestavení, otestování a volitelné vydání nové verze aplikace Šifrátor Mraveniště.
 #
-# Workflow se spouští ručně přes GitHub Actions a vytvoří samostatné buildy pro:
-# - Windows x64
-# - macOS Apple Silicon / ARM64
-# - macOS Intel / x64
-#
-# Po úspěšném sestavení se ZIP balíčky nahrají do GitHub Release
-# a současně se aktualizuje soubor update.json pro automatické aktualizace aplikace.
+# Režimy spuštění:
+# - test_only: pouze sestaví a otestuje všechny balíčky, nic se nepublikuje.
+# - release_after_approval: po úspěšném testu počká na schválení a pak vytvoří Release.
 
 name: Build release
 
 on:
-  # Ruční spuštění workflow z GitHub Actions.
-  # Verze se zadává bez písmene "v", protože tag se vytváří až později ve tvaru vX.Y.Z.
   workflow_dispatch:
     inputs:
       version:
         description: "Verze bez písmene v, například 0.0.5"
         required: true
         default: "0.0.5"
+      mode:
+        description: "Co se má udělat po testu"
+        required: true
+        type: choice
+        default: "test_only"
+        options:
+          - test_only
+          - release_after_approval
 
-# Workflow potřebuje právo zapisovat do repozitáře a spravovat GitHub Release assety.
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build a test ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
 
     strategy:
-      # Při chybě jedné platformy se ostatní buildy nechají doběhnout.
-      # Díky tomu je hned vidět, jestli problém nastal jen na jedné platformě.
       fail-fast: false
-
-      # Každá položka matrixu vytvoří samostatný build pro konkrétní operační systém.
       matrix:
         include:
           - platform: windows-x64
             os: windows-latest
-
           - platform: macos-arm64
-            os: macos-26
-
+            os: macos-14
           - platform: macos-x64
-            os: macos-26-intel
+            os: macos-15-intel
 
     steps:
-      # Stažení kompletního zdrojového kódu repozitáře do runneru.
       - name: Stáhnout repozitář
         uses: actions/checkout@v6
 
-      # Nastavení jednotné verze Pythonu pro všechny platformy.
       - name: Nastavit Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
-      # Diagnostický výpis prostředí.
-      # Pomáhá rychle ověřit, na jaké platformě build skutečně běží.
       - name: Zobrazit systém
         shell: bash
         run: |
           echo "Platforma: ${{ matrix.platform }}"
+          echo "Runner OS: ${{ matrix.os }}"
           python --version
           python -c "import platform; print(platform.system(), platform.machine())"
 
-      # Instalace buildovacích závislostí.
-      # PyInstaller vytváří aplikaci, PySide6 je UI framework a Pillow se používá pro práci s ikonami/obrázky.
       - name: Nainstalovat knihovny
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller PySide6 Pillow
 
-      # Spuštění lokálního buildovacího skriptu.
-      # Verze se předává přes standardní vstup, protože build_release.py ji očekává jako interaktivní vstup.
+      # Úprava je jen dočasná v runneru. Do repozitáře se necommitne.
+      # Díky tomu lze spustit EXE / APP s parametrem --smoke-test bez otevření GUI.
+      - name: Dočasně doplnit smoke test do main.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          path = Path("main.py")
+          text = path.read_text(encoding="utf-8")
+
+          if "__GITHUB_ACTIONS_SMOKE_TEST__" in text:
+              print("Smoke test už v main.py je.")
+              raise SystemExit(0)
+
+          smoke = textwrap.dedent(r'''
+          # ============================================================
+          # __GITHUB_ACTIONS_SMOKE_TEST__
+          # Dočasný testovací režim pro GitHub Actions.
+          # ============================================================
+
+          def __github_actions_smoke_test():
+              import os
+              import sys
+
+              print("Smoke test: start")
+              problems = []
+
+              required_paths = [
+                  "main.py",
+                  "pirate_key_renderer.py",
+                  "update_manager.py",
+                  "icons",
+                  "logika sifer",
+              ]
+
+              for item in required_paths:
+                  if not os.path.exists(item):
+                      problems.append(f"Chybí: {item}")
+                  else:
+                      print(f"OK: existuje {item}")
+
+              try:
+                  renderer = get_pirate_key_renderer()
+                  if renderer is None:
+                      problems.append("Nepodařilo se načíst pirate_key_renderer.py")
+                  else:
+                      print("OK: pirate_key_renderer.py načten")
+              except Exception as error:
+                  problems.append(f"Chyba rendereru: {error}")
+
+              logic_tests = [
+                  ("Morseova abeceda", "get_morse_logic"),
+                  ("Binární čtverce", "get_binary_squares_logic"),
+                  ("Brailovo písmo", "get_braille_logic"),
+                  ("Britská vlajka", "get_british_flag_logic"),
+                  ("Caesarova šifra", "get_caesar_logic"),
+                  ("Mříž", "get_mriz_logic"),
+                  ("SuperKrychle", "get_superkrychle_logic"),
+                  ("Vlčácká šifra", "get_vlcacka_sifra_logic"),
+                  ("Zednářská šifra", "get_zednarska_sifra_logic"),
+                  ("Zlomky", "get_zlomky_logic"),
+              ]
+
+              for name, getter_name in logic_tests:
+                  getter = globals().get(getter_name)
+                  if getter is None:
+                      print(f"PŘESKOČENO: {name} - getter {getter_name} v main.py není")
+                      continue
+
+                  try:
+                      module = getter()
+                      if module is None:
+                          problems.append(f"Nepodařilo se načíst logiku: {name}")
+                      else:
+                          print(f"OK: {name}")
+                  except Exception as error:
+                      problems.append(f"Chyba logiky {name}: {error}")
+
+              if problems:
+                  print("Smoke test: CHYBA")
+                  for problem in problems:
+                      print(" -", problem)
+                  return 1
+
+              print("Smoke test: OK")
+              return 0
+
+
+          if "--smoke-test" in sys.argv:
+              sys.exit(__github_actions_smoke_test())
+
+
+          ''')
+
+          marker = 'if __name__ == "__main__":'
+          if marker in text:
+              text = text.replace(marker, smoke + "\n" + marker, 1)
+          else:
+              text += "\n\n" + smoke
+
+          path.write_text(text, encoding="utf-8")
+          print("Smoke test byl dočasně doplněn do main.py.")
+          PY
+
+      - name: Smoke test přímo z Pythonu
+        shell: bash
+        run: |
+          python main.py --smoke-test
+
       - name: Spustit build_release.py
         shell: bash
         env:
@@ -83,8 +182,6 @@ jobs:
         run: |
           printf "%s\n" "$VERSION" | python build_release.py
 
-      # Vyhledání přesného ZIP balíčku pro aktuální platformu.
-      # Do artifactu se ukládá jen správný release ZIP, aby se do publikace nedostaly pomocné soubory.
       - name: Najít správný release ZIP
         shell: bash
         env:
@@ -105,11 +202,109 @@ jobs:
           mkdir -p upload
           cp "$ZIP_PATH" "upload/$(basename "$ZIP_PATH")"
 
+          echo "ZIP_PATH=upload/$(basename "$ZIP_PATH")" >> "$GITHUB_ENV"
           echo "Správný ZIP:"
           ls -lh upload/
 
-      # Uložení ZIPu jako artifact.
-      # Publish job si později stáhne všechny platformní artifacty a vytvoří z nich GitHub Release.
+      - name: Otestovat ZIP balíček
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -e
+
+          echo "Testuji ZIP: $ZIP_PATH"
+          test -f "$ZIP_PATH"
+          test -s "$ZIP_PATH"
+
+          rm -rf test_unpack
+          mkdir -p test_unpack
+
+          python - <<'PY'
+          import os
+          import zipfile
+
+          zip_path = os.environ["ZIP_PATH"]
+          out_dir = "test_unpack"
+
+          with zipfile.ZipFile(zip_path, "r") as z:
+              z.extractall(out_dir)
+
+          print("ZIP rozbalen.")
+          PY
+
+          if [ "$PLATFORM" = "windows-x64" ]; then
+            EXE_PATH="$(find test_unpack -type f -name "Sifrator_Mraveniste*.exe" | head -n 1)"
+
+            if [ -z "$EXE_PATH" ]; then
+              echo "CHYBA: V ZIPu není EXE soubor."
+              exit 1
+            fi
+
+            echo "Nalezeno EXE: $EXE_PATH"
+            "$EXE_PATH" --smoke-test
+
+          else
+            APP_PATH="$(find test_unpack -type d -name "Sifrator_Mraveniste*.app" | head -n 1)"
+
+            if [ -z "$APP_PATH" ]; then
+              echo "CHYBA: V ZIPu není .app balíček."
+              exit 1
+            fi
+
+            APP_BIN="$APP_PATH/Contents/MacOS/Sifrator_Mraveniste"
+
+            if [ ! -f "$APP_BIN" ]; then
+              echo "CHYBA: V .app není hlavní spustitelný soubor."
+              echo "Hledáno: $APP_BIN"
+              exit 1
+            fi
+
+            chmod +x "$APP_BIN"
+            file "$APP_BIN"
+
+            "$APP_BIN" --smoke-test
+
+            codesign --force --deep --sign - "$APP_PATH"
+            codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          fi
+
+      - name: Vypočítat SHA256
+        shell: bash
+        run: |
+          SHA="$(python - <<'PY'
+          import hashlib
+          import os
+
+          path = os.environ["ZIP_PATH"]
+          h = hashlib.sha256()
+          with open(path, "rb") as f:
+              for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                  h.update(chunk)
+
+          print(h.hexdigest())
+          PY
+          )"
+
+          echo "SHA256=$SHA" >> "$GITHUB_ENV"
+          echo "SHA256: $SHA"
+
+      - name: Zapsat souhrn testu
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          {
+            echo "## Výsledek buildu: ${PLATFORM}"
+            echo ""
+            echo "- Verze: v${VERSION}"
+            echo "- Runner: ${{ matrix.os }}"
+            echo "- ZIP: $(basename "$ZIP_PATH")"
+            echo "- SHA256: $SHA256"
+            echo "- Stav: ✅ Build a smoke test prošel"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Uložit ZIP jako artifact pro finální upload
         uses: actions/upload-artifact@v4
         with:
@@ -117,25 +312,68 @@ jobs:
           path: upload/*.zip
           if-no-files-found: error
 
+  summary:
+    name: Souhrn testů
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+
+    steps:
+      - name: Vypsat výsledek
+        shell: bash
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          VERSION: ${{ inputs.version }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          {
+            echo "## Souhrn vydání v${VERSION}"
+            echo ""
+            echo "- Režim: ${MODE}"
+            echo "- Výsledek buildů a testů: ${BUILD_RESULT}"
+            echo ""
+            if [ "$BUILD_RESULT" = "success" ]; then
+              echo "✅ Všechny platformy prošly."
+              if [ "$MODE" = "release_after_approval" ]; then
+                echo ""
+                echo "Další krok: GitHub se zastaví na schválení prostředí **release-approval**."
+                echo "Po schválení se vytvoří GitHub Release a aktualizuje update.json."
+              else
+                echo ""
+                echo "Režim je **test_only**, takže se nic nepublikuje."
+              fi
+            else
+              echo "❌ Některý build nebo test selhal. Release se nevytvoří."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$BUILD_RESULT" != "success" ]; then
+            exit 1
+          fi
+
   publish:
     name: Publish release and update.json
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
+      - summary
+    if: ${{ inputs.mode == 'release_after_approval' }}
+
+    # Tady se workflow zastaví a počká na tvoje ruční schválení.
+    # V repozitáři musí existovat Environment s názvem: release-approval
+    environment:
+      name: release-approval
 
     steps:
-      # Repozitář se stahuje znovu, protože publish job běží v samostatném runneru.
       - name: Stáhnout repozitář
         uses: actions/checkout@v6
 
-      # Stažení ZIP artifactů vytvořených v build jobu.
       - name: Stáhnout ZIPy z buildu
         uses: actions/download-artifact@v4
         with:
           path: all-zips
           merge-multiple: true
 
-      # Kontrola, že existují všechny tři požadované platformní balíčky.
-      # Současně se vypočítají SHA256 hashe pro update.json.
       - name: Zkontrolovat ZIPy
         shell: bash
         env:
@@ -175,8 +413,6 @@ jobs:
           echo "MAC_ARM_SHA=$(sha256sum "$MAC_ARM_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
           echo "MAC_X64_SHA=$(sha256sum "$MAC_X64_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
 
-      # Vytvoření update.json pro automatický updater v aplikaci.
-      # package_url odkazuje na ZIP soubory v GitHub Release a sha256 slouží ke kontrole integrity.
       - name: Vytvořit update.json
         shell: bash
         env:
@@ -221,8 +457,6 @@ jobs:
           print(json.dumps(data, ensure_ascii=False, indent=2))
           PY
 
-      # Vytvoření GitHub Release, pokud pro daný tag ještě neexistuje.
-      # Pokud release existuje, workflow ho použije a jen aktualizuje assety.
       - name: Vytvořit nebo najít GitHub Release
         shell: bash
         env:
@@ -239,8 +473,6 @@ jobs:
               --notes "Nová verze $VERSION."
           fi
 
-      # Odstranění starých nebo chybných assetů před nahráním nové verze.
-      # Příkaz je tolerantní k neexistujícím assetům, aby workflow nespadl při prvním vydání.
       - name: Smazat špatné nebo staré assety v Release
         shell: bash
         env:
@@ -256,8 +488,6 @@ jobs:
           gh release delete-asset "$TAG" "$MAC_X64_NAME" -y || true
           gh release delete-asset "$TAG" "update.json" -y || true
 
-      # Nahrání finálních ZIP balíčků a update.json do GitHub Release.
-      # Parametr --clobber povolí přepsání assetu, pokud by už existoval.
       - name: Nahrát správné ZIPy do GitHub Release
         shell: bash
         env:
@@ -271,8 +501,6 @@ jobs:
           gh release upload "$TAG" "$MAC_X64_ZIP" --clobber
           gh release upload "$TAG" update.json --clobber
 
-      # Commit update.json do hlavní větve repozitáře.
-      # Aplikace si tento soubor čte z raw GitHub URL při kontrole aktualizací.
       - name: Commitnout update.json do repozitáře
         shell: bash
         env:
@@ -289,3 +517,20 @@ jobs:
             git commit -m "Update release metadata v$VERSION"
             git push
           fi
+
+      - name: Souhrn publikace
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "## Release publikován"
+            echo ""
+            echo "✅ Release v${VERSION} byl vytvořen / aktualizován."
+            echo ""
+            echo "Nahrané soubory:"
+            echo "- $WIN_NAME"
+            echo "- $MAC_ARM_NAME"
+            echo "- $MAC_X64_NAME"
+            echo "- update.json"
+          } >> "$GITHUB_STEP_SUMMARY"
