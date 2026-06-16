@@ -175,8 +175,14 @@ jobs:
           fi
 
           mkdir -p upload
-          cp "$ZIP_PATH" "upload/$(basename "$ZIP_PATH")"
-          echo "UPLOAD_ZIP=upload/$(basename "$ZIP_PATH")" >> "$GITHUB_ENV"
+          UPLOAD_ZIP="upload/$(basename "$ZIP_PATH")"
+          cp "$ZIP_PATH" "$UPLOAD_ZIP"
+
+          # DULEZITE:
+          # Hodnoty zapsane do GITHUB_ENV jsou dostupne az v dalsim kroku.
+          # Proto je tady zaroven exportujeme pro Python, ktery bezi ve stejnem kroku.
+          export UPLOAD_ZIP
+          echo "UPLOAD_ZIP=$UPLOAD_ZIP" >> "$GITHUB_ENV"
 
           python - <<'PY'
           import hashlib
