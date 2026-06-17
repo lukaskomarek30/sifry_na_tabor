@@ -131,31 +131,72 @@ def load_python_module_from_path(module_name: str, file_path: str):
         return None
 
 
-def get_cipher_logic_file(*parts):
-    """Vrátí cestu k souboru v adresáři logika sifer.
+def _hash_unicode_component(text: str) -> str:
+    """Vrátí název kompatibilní i s repozitáři, kde se diakritika uložila jako #Uxxxx."""
+    result = []
+    for ch in str(text):
+        code = ord(ch)
+        if code > 127:
+            result.append(f"#U{code:04x}")
+        else:
+            result.append(ch)
+    return "".join(result)
 
-    Funkce sjednocuje hledání modulů šifer napříč vývojovým režimem,
-    Windows onedir buildem a macOS .app balíčkem.
+
+def _path_with_unicode_fallback(root: str, *parts: str) -> str:
+    """Najde cestu nejdřív normálně a potom i s #Uxxxx fallback názvy."""
+    variants = [list(parts)]
+    encoded = [_hash_unicode_component(part) for part in parts]
+    if encoded != list(parts):
+        variants.append(encoded)
+
+    if parts:
+        for index, part in enumerate(parts):
+            enc = _hash_unicode_component(part)
+            if enc != part:
+                current = list(parts)
+                current[index] = enc
+                variants.append(current)
+
+    seen = set()
+    for variant in variants:
+        candidate = os.path.join(root, *variant)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.exists(candidate):
+            return candidate
+
+    return os.path.join(root, *parts)
+
+
+def get_cipher_logic_file(*parts):
+    """Vrátí cestu k souboru v logika sifer/... vedle main.py / EXE.
+
+    Podporuje normální české názvy složek i fallback názvy ve tvaru #Uxxxx,
+    aby build fungoval stejně z Windows, GitHub ZIPu i GitHub Actions.
     """
-    candidates = [
-        os.path.join(get_app_dir(), "logika sifer", *parts),
-        os.path.join(get_script_dir(), "logika sifer", *parts),
+    roots = [
+        os.path.join(get_app_dir(), "logika sifer"),
+        os.path.join(get_script_dir(), "logika sifer"),
     ]
 
     bundle_dir = get_pyinstaller_bundle_dir()
     if bundle_dir:
-        candidates.append(os.path.join(bundle_dir, "logika sifer", *parts))
+        roots.append(os.path.join(bundle_dir, "logika sifer"))
 
     if getattr(sys, "frozen", False) and sys.platform == "darwin":
         macos_dir = os.path.dirname(sys.executable)
         contents_dir = os.path.dirname(macos_dir)
-        candidates.append(os.path.join(contents_dir, "Resources", "logika sifer", *parts))
+        roots.append(os.path.join(contents_dir, "Resources", "logika sifer"))
 
-    for path in candidates:
-        if path and os.path.exists(path):
-            return path
+    for root in roots:
+        if root and os.path.isdir(root):
+            candidate = _path_with_unicode_fallback(root, *parts)
+            if os.path.exists(candidate):
+                return candidate
 
-    return candidates[0]
+    return os.path.join(get_app_dir(), "logika sifer", *parts)
 
 
 def get_morse_logic_module():
@@ -1194,19 +1235,26 @@ class SifratorSkinWidget(QWidget):
         return self.find_icon_path(file_name)
 
     def find_icon_path(self, file_name):
-        candidates = [
-            os.path.join(self.icons_path, file_name),
-            os.path.join(get_app_dir(), "icons", file_name),
-            os.path.join(get_script_dir(), "icons", file_name),
+        file_names = [file_name]
+        encoded_name = _hash_unicode_component(file_name) if '_hash_unicode_component' in globals() else file_name
+        if encoded_name != file_name:
+            file_names.append(encoded_name)
+
+        folders = [
+            self.icons_path,
+            os.path.join(get_app_dir(), "icons"),
+            os.path.join(get_script_dir(), "icons"),
         ]
 
         bundle_dir = get_pyinstaller_bundle_dir()
         if bundle_dir:
-            candidates.append(os.path.join(bundle_dir, "icons", file_name))
+            folders.append(os.path.join(bundle_dir, "icons"))
 
-        for path in candidates:
-            if path and os.path.exists(path):
-                return path
+        for folder in folders:
+            for name in file_names:
+                path = os.path.join(folder, name)
+                if path and os.path.exists(path):
+                    return path
 
         return os.path.join(self.icons_path, file_name)
 
@@ -8673,6 +8721,97 @@ try:
 except Exception:
     pass
 
+
+
+def run_smoke_test() -> int:
+    """Rychlý test pro GitHub Actions bez otevření hlavního okna aplikace."""
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    print("Smoke test: start")
+    print(f"APP_NAME: {APP_NAME}")
+    print(f"APP_VERSION: {APP_VERSION}")
+    print(f"APP_DIR: {get_app_dir()}")
+    print(f"ICONS_DIR: {get_icons_dir()}")
+
+    errors = []
+
+    def check(condition: bool, ok_message: str, error_message: str) -> None:
+        if condition:
+            print(f"OK: {ok_message}")
+        else:
+            errors.append(error_message)
+
+    check(os.path.isdir(get_icons_dir()), "icons", "Chybi slozka icons")
+    check(os.path.isdir(os.path.join(get_app_dir(), "logika sifer")) or os.path.isdir(os.path.join(get_script_dir(), "logika sifer")), "logika sifer", "Chybi slozka logika sifer")
+    check(os.path.exists(get_pirate_key_renderer_file()), "pirate_key_renderer.py", "Chybi pirate_key_renderer.py")
+
+    try:
+        renderer = get_pirate_key_renderer()
+        check(renderer is not None, "pirate_key_renderer import", "Nepodarilo se nacist pirate_key_renderer.py")
+    except Exception as error:
+        errors.append(f"Chyba pirate_key_renderer.py: {error}")
+
+    logic_tests = [
+        ("Binarni ctverce", get_binary_squares_logic),
+        ("Brailovo pismo", get_braille_logic),
+        ("Britska vlajka", get_british_flag_logic),
+        ("Caesarova sifra", get_caesar_logic),
+        ("Ctverec", get_ctverec_logic),
+        ("Hebrejsky kriz", get_hebrew_cross_logic),
+        ("Maly polsky kriz", get_small_polish_cross_logic),
+        ("Mobil", get_mobile_logic),
+        ("Moonovo pismo", get_moon_logic),
+        ("Morseova abeceda", get_morse_logic),
+        ("Morseova abeceda hory", get_morse_hory_logic),
+        ("Morseova abeceda pila", get_morse_pila_logic),
+        ("Morseova abeceda stromy", get_morse_stromy_logic),
+        ("Mriz", get_mriz_logic),
+        ("Okno", get_okno_logic),
+        ("Pavouci sit", get_pavouci_sit_logic),
+        ("Posunkova abeceda", get_posunkova_abeceda_logic),
+        ("Pseudo-Cina", get_pseudo_cina_logic),
+        ("Semafor", get_semafor_logic),
+        ("SuperKrychle", get_superkrychle_logic),
+        ("Tancici figurky", get_tancici_figurky_logic),
+        ("Tancici figurky II", get_tancici_figurky_ii_logic),
+        ("Velky polsky kriz", get_velky_polsky_kriz_logic),
+        ("Velky polsky kriz 26", get_velky_polsky_kriz_26_logic),
+        ("Vlcacka sifra", get_vlcacka_sifra_logic),
+        ("Zamena pismen A=Z", get_zamena_pismen_a_z_logic),
+        ("Zamena cisel A01-Z26", get_zamena_cisla_a01_z26_logic),
+        ("Zamena cisel A26-Z01", get_zamena_cisla_a26_z01_logic),
+        ("Zednarska sifra", get_zednarska_sifra_logic),
+        ("Zlomky", get_zlomky_logic),
+    ]
+
+    for name, getter in logic_tests:
+        try:
+            module = getter()
+            if module is None:
+                errors.append(f"Nepodarilo se nacist logiku: {name}")
+            else:
+                print(f"OK: {name}")
+        except Exception as error:
+            errors.append(f"Chyba logiky {name}: {error}")
+
+    if errors:
+        print("Smoke test: CHYBA")
+        for error in errors:
+            print(" -", str(error))
+        return 1
+
+    print("Smoke test: OK")
+    return 0
+
+
+if "--smoke-test" in sys.argv:
+    sys.exit(run_smoke_test())
 
 if __name__ == "__main__":
     # Musí být před QApplication, jinak si Windows může držet ikonu python.exe.
