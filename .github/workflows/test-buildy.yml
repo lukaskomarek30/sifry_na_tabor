@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Testovaci verze bez pismene v"
+        description: "Testovací verze bez písmene v"
         required: true
-        default: "0.0.2-test"
+        default: "0.0.3-test"
   push:
     branches:
       - main
@@ -15,22 +15,61 @@ permissions:
   contents: read
 
 env:
+  APP_NAME: Sifrator_Mraveniste
+  PYTHON_VERSION: "3.11"
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
-  LC_ALL: "C.UTF-8"
-  LANG: "C.UTF-8"
-
-defaults:
-  run:
-    shell: bash
-
-concurrency:
-  group: sifrator-test-${{ github.ref }}
-  cancel-in-progress: true
+  LANG: "en_US.UTF-8"
 
 jobs:
-  test-build:
+  source-check:
+    name: Kontrola zdrojových souborů
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stáhnout repozitář
+        uses: actions/checkout@v6
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Kontrola syntaxe všech Python souborů
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib
+          import py_compile
+          import sys
+
+          ignored = {'.git', '.venv', 'venv', '.venv_build', 'build', 'dist', 'release', '__pycache__'}
+          errors = []
+          files = []
+
+          for path in pathlib.Path('.').rglob('*.py'):
+              if any(part in ignored for part in path.parts):
+                  continue
+              files.append(path)
+              try:
+                  py_compile.compile(str(path), doraise=True)
+              except Exception as error:
+                  errors.append((path, error))
+
+          print(f'Zkontrolováno Python souborů: {len(files)}')
+          if errors:
+              print('CHYBY:')
+              for path, error in errors:
+                  print(f' - {path}: {error}')
+              sys.exit(1)
+
+          print('Syntaxe všech Python souborů je OK.')
+          PY
+
+  build-test:
     name: Test ${{ matrix.platform }}
+    needs: source-check
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -45,193 +84,274 @@ jobs:
             os: macos-15-intel
 
     steps:
-      - name: Stahnout repozitar
-        uses: actions/checkout@v4
+      - name: Stáhnout repozitář
+        uses: actions/checkout@v6
 
-      - name: Nastavit Python
-        uses: actions/setup-python@v5
+      - name: Nastavit Python 3.11
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      - name: Nastavit testovaci verzi
+      - name: Nastavit UTF-8 na Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: chcp 65001
+
+      - name: Nastavit verzi pro test
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=0.0.0-test" >> "$GITHUB_ENV"
+            echo "VERSION=0.0.3-test" >> "$GITHUB_ENV"
           fi
 
+      - name: Zobrazit systém
+        shell: bash
+        run: |
+          echo "Platforma: ${{ matrix.platform }}"
+          echo "Runner OS: $RUNNER_OS"
+          python --version
+          python - <<'PY'
+          import platform
+          print('System:', platform.system())
+          print('Machine:', platform.machine())
+          PY
+
       - name: Nainstalovat knihovny
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller PySide6 Pillow
+          python -m pip install -r requirements.txt
 
-      - name: Otestovat zakladni soubory projektu
+      - name: Ověřit hlavní soubory projektu
+        shell: bash
         run: |
           test -f main.py
           test -f pirate_key_renderer.py
           test -f update_manager.py
-          test -f build_release.py
           test -d icons
           test -d "logika sifer"
-          python -m py_compile main.py pirate_key_renderer.py update_manager.py build_release.py
 
-      - name: Doplnit CI smoke-test rezim do main.py
+      - name: Aktualizovat APP_VERSION v main.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          path = Path('main.py')
+          text = path.read_text(encoding='utf-8-sig')
+          text, count = re.subn(r'^APP_VERSION\s*=\s*["\'].*?["\']', f'APP_VERSION = "{version}"', text, count=1, flags=re.MULTILINE)
+          if count == 0:
+              text = f'APP_VERSION = "{version}"\n' + text
+          path.write_text(text, encoding='utf-8')
+          print(f'APP_VERSION nastaveno na {version}')
+          PY
+
+      - name: Smoke test přímo ze zdrojáků
+        shell: bash
+        run: python main.py --smoke-test
+
+      - name: Připravit ikony aplikace
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          from PIL import Image
 
-          path = Path("main.py")
-          text = path.read_text(encoding="utf-8-sig")
+          icons = Path('icons')
+          logo = icons / 'logo.png'
+          if not logo.exists():
+              raise SystemExit('Chybí icons/logo.png')
 
-          if "CI_SMOKE_TEST_SIFRATOR" not in text:
-              marker = 'if __name__ == "__main__":'
-              if marker not in text:
-                  raise SystemExit('V main.py nebyl nalezen radek: if __name__ == "__main__":')
+          img = Image.open(logo).convert('RGBA')
+          canvas = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+          img.thumbnail((900, 900))
+          canvas.paste(img, ((1024 - img.width) // 2, (1024 - img.height) // 2), img)
 
-              smoke = r'''
-          
-          # ============================================================
-          # CI_SMOKE_TEST_SIFRATOR
-          # Testovaci rezim pro GitHub Actions.
-          # Otevre se jen pri spusteni s parametrem --smoke-test.
-          # Normalni spusteni aplikace se tim nemeni.
-          # ============================================================
-          def run_smoke_test():
-              import sys
-              try:
-                  sys.stdout.reconfigure(encoding="utf-8")
-                  sys.stderr.reconfigure(encoding="utf-8")
-              except Exception:
-                  pass
-              print("Smoke test: start")
-              errors = []
-          
-              def check(name, fn):
-                  try:
-                      value = fn()
-                      if value is None:
-                          errors.append(f"{name}: vratilo None")
-                      else:
-                          print(f"OK: {name}")
-                  except Exception as error:
-                      errors.append(f"{name}: {error}")
-          
-              try:
-                  print(f"APP_NAME: {APP_NAME}")
-                  print(f"APP_VERSION: {APP_VERSION}")
-                  print(f"APP_DIR: {get_app_dir()}")
-                  print(f"ICONS_DIR: {get_icons_dir()}")
-              except Exception as error:
-                  errors.append(f"Zakladni informace aplikace: {error}")
-          
-              check("pirate_key_renderer.py", get_pirate_key_renderer)
-              check("Morseova abeceda", get_morse_logic)
-              check("Binarni ctverce", get_binary_squares_logic)
-              check("Brailovo pismo", get_braille_logic)
-              check("Caesarova sifra", get_caesar_logic)
-              check("Mriz", get_mriz_logic)
-              check("Vlcacka sifra", get_vlcacka_sifra_logic)
-              check("Zlomky", get_zlomky_logic)
-          
-              if errors:
-                  print("Smoke test: CHYBA")
-                  for error in errors:
-                      print(" -", error)
-                  return 1
-          
-              print("Smoke test: OK")
-              return 0
-          
-          if "--smoke-test" in sys.argv:
-              sys.exit(run_smoke_test())
-          
-          '''
-              text = text.replace(marker, smoke + marker, 1)
-              path.write_text(text, encoding="utf-8")
-              print("CI smoke-test rezim byl doplnen do main.py.")
+          ico = icons / 'app.ico'
+          if not ico.exists():
+              canvas.save(ico, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+              print('Vytvořeno icons/app.ico')
           else:
-              print("CI smoke-test rezim uz v main.py je.")
+              print('OK: icons/app.ico už existuje')
+
+          icns = icons / 'app.icns'
+          if not icns.exists():
+              try:
+                  canvas.save(icns, format='ICNS')
+                  print('Vytvořeno icons/app.icns')
+              except Exception as error:
+                  print(f'Upozornění: app.icns se nepodařilo vytvořit: {error}')
+          else:
+              print('OK: icons/app.icns už existuje')
           PY
 
-      - name: Smoke test primo ze zdrojaku
+      - name: Build aplikace přes PyInstaller
+        shell: bash
         run: |
-          python main.py --smoke-test
+          python - <<'PY'
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
 
-      - name: Spustit build_release.py
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "14.0"
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          platform_key = '${{ matrix.platform }}'
+          sep = ';' if os.name == 'nt' else ':'
+
+          for folder in ('build', 'dist'):
+              path = Path(folder)
+              if path.exists():
+                  shutil.rmtree(path, ignore_errors=True)
+
+          spec = Path(f'{app_name}.spec')
+          if spec.exists():
+              spec.unlink()
+
+          cmd = [
+              sys.executable, '-m', 'PyInstaller',
+              '--noconfirm',
+              '--clean',
+              '--onedir',
+              '--windowed',
+              '--name', app_name,
+          ]
+
+          if os.name == 'nt':
+              cmd += ['--contents-directory', '.']
+              icon = Path('icons/app.ico')
+          else:
+              icon = Path('icons/app.icns')
+
+          if icon.exists():
+              cmd += ['--icon', str(icon)]
+
+          cmd += [
+              '--hidden-import', 'pirate_key_renderer',
+              '--hidden-import', 'update_manager',
+              '--add-data', f'icons{sep}icons',
+              '--add-data', f'logika sifer{sep}logika sifer',
+              '--add-data', f'update.json{sep}.',
+              '--add-data', f'update_manager.py{sep}.',
+              '--add-data', f'pirate_key_renderer.py{sep}.',
+              'main.py',
+          ]
+
+          print(' '.join(cmd))
+          subprocess.run(cmd, check=True)
+          PY
+
+      - name: Podepsat macOS aplikaci ad-hoc
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          printf "%s\n" "$VERSION" | python build_release.py
+          codesign --force --deep --sign - "dist/${APP_NAME}.app"
+          codesign --verify --deep --strict --verbose=2 "dist/${APP_NAME}.app"
+          file "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 
-      - name: Najit a otestovat ZIP
-        env:
-          PLATFORM: ${{ matrix.platform }}
+      - name: Smoke test hotové aplikace
+        shell: bash
         run: |
-          ZIP_PATH="$(find release -type f -name "Sifrator_Mraveniste*${PLATFORM}*_v${VERSION}.zip" | head -n 1)"
-          if [ -z "$ZIP_PATH" ]; then
-            echo "CHYBA: Nebyl nalezen ZIP pro $PLATFORM."
-            exit 1
-          fi
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
 
-          mkdir -p upload
-          UPLOAD_ZIP="upload/$(basename "$ZIP_PATH")"
-          cp "$ZIP_PATH" "$UPLOAD_ZIP"
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          platform_key = '${{ matrix.platform }}'
 
-          # DULEZITE:
-          # Hodnoty zapsane do GITHUB_ENV jsou dostupne az v dalsim kroku.
-          # Proto je tady zaroven exportujeme pro Python, ktery bezi ve stejnem kroku.
-          export UPLOAD_ZIP
-          echo "UPLOAD_ZIP=$UPLOAD_ZIP" >> "$GITHUB_ENV"
+          if platform_key == 'windows-x64':
+              exe = Path('dist') / app_name / f'{app_name}.exe'
+              if not exe.exists():
+                  raise SystemExit(f'Chybí EXE: {exe}')
+              subprocess.run([str(exe), '--smoke-test'], check=True)
+          else:
+              exe = Path('dist') / f'{app_name}.app' / 'Contents' / 'MacOS' / app_name
+              if not exe.exists():
+                  raise SystemExit(f'Chybí macOS spustitelný soubor: {exe}')
+              subprocess.run([str(exe), '--smoke-test'], check=True)
+          PY
 
+      - name: Zabalit a ověřit ZIP
+        shell: bash
+        run: |
           python - <<'PY'
           import hashlib
           import os
+          import shutil
+          import subprocess
+          import tempfile
           import zipfile
           from pathlib import Path
 
-          platform_key = os.environ["PLATFORM"]
-          path = Path(os.environ["UPLOAD_ZIP"])
-          with zipfile.ZipFile(path, "r") as zf:
-              bad = zf.testzip()
-              if bad:
-                  raise SystemExit(f"ZIP je poskozeny, prvni spatny soubor: {bad}")
-              names = zf.namelist()
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          version = os.environ['VERSION']
+          platform_key = '${{ matrix.platform }}'
+          release = Path('release')
+          release.mkdir(exist_ok=True)
+          zip_name = f'{app_name}_{platform_key}_v{version}.zip'
+          zip_path = release / zip_name
 
-          if platform_key == "windows-x64" and "Sifrator_Mraveniste.exe" not in names:
-              raise SystemExit("Windows ZIP nema Sifrator_Mraveniste.exe v koreni.")
-          if platform_key != "windows-x64" and "Sifrator_Mraveniste.app/Contents/MacOS/Sifrator_Mraveniste" not in names:
-              raise SystemExit("macOS ZIP nema spustitelny soubor v .app.")
+          if zip_path.exists():
+              zip_path.unlink()
 
-          sha = hashlib.sha256(path.read_bytes()).hexdigest().lower()
-          print(f"ZIP OK: {path} SHA256={sha}")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
-              f.write(f"### {platform_key}\n")
-              f.write(f"✅ Test prošel: `{path.name}`\n\n")
-              f.write(f"SHA256: `{sha}`\n\n")
+          if platform_key == 'windows-x64':
+              src = Path('dist') / app_name
+              exe = src / f'{app_name}.exe'
+              if not exe.exists():
+                  raise SystemExit(f'Chybí EXE: {exe}')
+              with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+                  for path in src.rglob('*'):
+                      if path.is_file():
+                          zf.write(path, path.relative_to(src))
+          else:
+              src = Path('dist') / f'{app_name}.app'
+              if not src.exists():
+                  raise SystemExit(f'Chybí APP: {src}')
+              subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(src), str(zip_path)], check=True)
+
+          if zip_path.stat().st_size < 1024 * 1024:
+              raise SystemExit(f'ZIP je podezřele malý: {zip_path.stat().st_size} B')
+          if zip_path.stat().st_size > 500 * 1024 * 1024:
+              raise SystemExit(f'ZIP je podezřele velký: {zip_path.stat().st_size} B')
+
+          with tempfile.TemporaryDirectory() as td:
+              tmp = Path(td)
+              with zipfile.ZipFile(zip_path, 'r') as zf:
+                  zf.extractall(tmp)
+              if platform_key == 'windows-x64':
+                  expected = tmp / f'{app_name}.exe'
+              else:
+                  expected = tmp / f'{app_name}.app'
+              if not expected.exists():
+                  raise SystemExit(f'ZIP má špatnou strukturu, chybí: {expected}')
+
+          sha = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+          sha_file = release / f'{zip_name}.sha256'
+          sha_file.write_text(f'{sha}  {zip_name}\n', encoding='utf-8')
+
+          print(f'ZIP: {zip_path}')
+          print(f'SHA256: {sha}')
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+              f.write(f'### {platform_key}\n')
+              f.write(f'- ZIP: `{zip_name}`\n')
+              f.write(f'- SHA256: `{sha}`\n')
+              f.write(f'- Velikost: `{zip_path.stat().st_size}` B\n\n')
           PY
 
-      - name: Smoke test zabalene aplikace
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          if [ "$PLATFORM" = "windows-x64" ]; then
-            APP="dist/Sifrator_Mraveniste/Sifrator_Mraveniste.exe"
-          else
-            APP="dist/Sifrator_Mraveniste.app/Contents/MacOS/Sifrator_Mraveniste"
-            chmod +x "$APP" || true
-          fi
-
-          if [ ! -f "$APP" ]; then
-            echo "CHYBA: Spustitelny soubor nebyl nalezen: $APP"
-            exit 1
-          fi
-
-          "$APP" --smoke-test
-
-      - name: Ulozit testovaci ZIP jako artifact
-        uses: actions/upload-artifact@v4
+      - name: Nahrát testovací artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.platform }}-test
-          path: upload/*.zip
+          name: ${{ matrix.platform }}
+          path: |
+            release/*.zip
+            release/*.sha256
           if-no-files-found: error
