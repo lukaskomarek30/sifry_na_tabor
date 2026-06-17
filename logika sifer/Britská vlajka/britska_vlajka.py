@@ -99,9 +99,9 @@ SEGMENTS = {
 
 
 # Mapování písmen na segmenty podle grafického klíče šifry.
-LETTER_# Normalizované segmenty jedné kreslicí buňky.
+# Normalizované segmenty jedné kreslicí buňky.
 # Souřadnice jsou uvedené relativně v rozsahu 0–1, aby bylo možné buňku libovolně škálovat.
-SEGMENTS = {
+LETTER_SEGMENTS = {
     "A": ["diag_down", "diag_up", "mid"],
     "B": ["top", "mid", "bot", "left", "right", "tl_c"],
     "C": ["diag_down", "diag_up", "center", "c_r"],
