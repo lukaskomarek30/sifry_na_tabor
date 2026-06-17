@@ -1,20 +1,14 @@
-# Workflow pro sestavení, otestování a volitelné vydání nové verze aplikace Šifrátor Mraveniště.
-#
-# Režimy spuštění:
-# - test_only: pouze sestaví a otestuje všechny balíčky, nic se nepublikuje.
-# - release_after_approval: po úspěšném testu počká na schválení a pak vytvoří Release.
-
 name: Build release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Verze bez písmene v, například 0.0.5"
+        description: "Verze bez písmene v, například 0.0.3"
         required: true
-        default: "0.0.5"
+        default: "0.0.3"
       mode:
-        description: "Co se má udělat po testu"
+        description: "Režim spuštění"
         required: true
         type: choice
         default: "test_only"
@@ -26,14 +20,61 @@ permissions:
   contents: write
 
 env:
+  APP_NAME: Sifrator_Mraveniste
+  PYTHON_VERSION: "3.11"
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
-  LC_ALL: "C.UTF-8"
-  LANG: "C.UTF-8"
+  LANG: "en_US.UTF-8"
 
 jobs:
+  source-check:
+    name: Kontrola zdrojových souborů
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stáhnout repozitář
+        uses: actions/checkout@v6
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Kontrola syntaxe všech Python souborů
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib
+          import py_compile
+          import sys
+
+          ignored = {'.git', '.venv', 'venv', '.venv_build', 'build', 'dist', 'release', '__pycache__'}
+          errors = []
+          files = []
+
+          for path in pathlib.Path('.').rglob('*.py'):
+              if any(part in ignored for part in path.parts):
+                  continue
+              files.append(path)
+              try:
+                  py_compile.compile(str(path), doraise=True)
+              except Exception as error:
+                  errors.append((path, error))
+
+          print(f'Zkontrolováno Python souborů: {len(files)}')
+          if errors:
+              print('CHYBY:')
+              for path, error in errors:
+                  print(f' - {path}: {error}')
+              sys.exit(1)
+
+          print('Syntaxe všech Python souborů je OK.')
+          PY
+
   build:
     name: Build a test ${{ matrix.platform }}
+    needs: source-check
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -51,422 +92,382 @@ jobs:
       - name: Stáhnout repozitář
         uses: actions/checkout@v6
 
-      - name: Nastavit Python
+      - name: Nastavit Python 3.11
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Nastavit UTF-8 na Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: chcp 65001
+
+      - name: Nastavit verzi
+        shell: bash
+        run: echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
 
       - name: Zobrazit systém
         shell: bash
         run: |
           echo "Platforma: ${{ matrix.platform }}"
-          echo "Runner OS: ${{ matrix.os }}"
+          echo "Runner OS: $RUNNER_OS"
           python --version
-          python -c "import platform; print(platform.system(), platform.machine())"
+          python - <<'PY'
+          import platform
+          print('System:', platform.system())
+          print('Machine:', platform.machine())
+          PY
 
       - name: Nainstalovat knihovny
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller PySide6 Pillow
+          python -m pip install -r requirements.txt
 
-      # Úprava je jen dočasná v runneru. Do repozitáře se necommitne.
-      # Díky tomu lze spustit EXE / APP s parametrem --smoke-test bez otevření GUI.
-      - name: Dočasně doplnit smoke test do main.py
+      - name: Ověřit hlavní soubory projektu
+        shell: bash
+        run: |
+          test -f main.py
+          test -f pirate_key_renderer.py
+          test -f update_manager.py
+          test -d icons
+          test -d "logika sifer"
+
+      - name: Aktualizovat APP_VERSION v main.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          path = Path('main.py')
+          text = path.read_text(encoding='utf-8-sig')
+          text, count = re.subn(r'^APP_VERSION\s*=\s*["\'].*?["\']', f'APP_VERSION = "{version}"', text, count=1, flags=re.MULTILINE)
+          if count == 0:
+              text = f'APP_VERSION = "{version}"\n' + text
+          path.write_text(text, encoding='utf-8')
+          print(f'APP_VERSION nastaveno na {version}')
+          PY
+
+      - name: Smoke test přímo ze zdrojáků
+        shell: bash
+        run: python main.py --smoke-test
+
+      - name: Připravit ikony aplikace
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          import textwrap
+          from PIL import Image
 
-          path = Path("main.py")
-          text = path.read_text(encoding="utf-8")
+          icons = Path('icons')
+          logo = icons / 'logo.png'
+          if not logo.exists():
+              raise SystemExit('Chybí icons/logo.png')
 
-          if "__GITHUB_ACTIONS_SMOKE_TEST__" in text:
-              print("Smoke test už v main.py je.")
-              raise SystemExit(0)
+          img = Image.open(logo).convert('RGBA')
+          canvas = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+          img.thumbnail((900, 900))
+          canvas.paste(img, ((1024 - img.width) // 2, (1024 - img.height) // 2), img)
 
-          smoke = textwrap.dedent(r'''
-          # ============================================================
-          # __GITHUB_ACTIONS_SMOKE_TEST__
-          # Dočasný testovací režim pro GitHub Actions.
-          # ============================================================
-
-          def __github_actions_smoke_test():
-              import os
-              import sys
-              try:
-                  sys.stdout.reconfigure(encoding="utf-8")
-                  sys.stderr.reconfigure(encoding="utf-8")
-              except Exception:
-                  pass
-
-              print("Smoke test: start")
-              problems = []
-
-              required_paths = [
-                  "main.py",
-                  "pirate_key_renderer.py",
-                  "update_manager.py",
-                  "icons",
-                  "logika sifer",
-              ]
-
-              for item in required_paths:
-                  if not os.path.exists(item):
-                      problems.append(f"Chybí: {item}")
-                  else:
-                      print(f"OK: existuje {item}")
-
-              try:
-                  renderer = get_pirate_key_renderer()
-                  if renderer is None:
-                      problems.append("Nepodařilo se načíst pirate_key_renderer.py")
-                  else:
-                      print("OK: pirate_key_renderer.py načten")
-              except Exception as error:
-                  problems.append(f"Chyba rendereru: {error}")
-
-              logic_tests = [
-                  ("Morseova abeceda", "get_morse_logic"),
-                  ("Binarni ctverce", "get_binary_squares_logic"),
-                  ("Brailovo pismo", "get_braille_logic"),
-                  ("Britska vlajka", "get_british_flag_logic"),
-                  ("Caesarova sifra", "get_caesar_logic"),
-                  ("Mriz", "get_mriz_logic"),
-                  ("SuperKrychle", "get_superkrychle_logic"),
-                  ("Vlcacka sifra", "get_vlcacka_sifra_logic"),
-                  ("Zednarska sifra", "get_zednarska_sifra_logic"),
-                  ("Zlomky", "get_zlomky_logic"),
-              ]
-
-              for name, getter_name in logic_tests:
-                  getter = globals().get(getter_name)
-                  if getter is None:
-                      print(f"PŘESKOČENO: {name} - getter {getter_name} v main.py není")
-                      continue
-
-                  try:
-                      module = getter()
-                      if module is None:
-                          problems.append(f"Nepodařilo se načíst logiku: {name}")
-                      else:
-                          print(f"OK: {name}")
-                  except Exception as error:
-                      problems.append(f"Chyba logiky {name}: {error}")
-
-              if problems:
-                  print("Smoke test: CHYBA")
-                  for problem in problems:
-                      print(" -", problem)
-                  return 1
-
-              print("Smoke test: OK")
-              return 0
-
-
-          if "--smoke-test" in sys.argv:
-              sys.exit(__github_actions_smoke_test())
-
-
-          ''')
-
-          marker = 'if __name__ == "__main__":'
-          if marker in text:
-              text = text.replace(marker, smoke + "\n" + marker, 1)
+          ico = icons / 'app.ico'
+          if not ico.exists():
+              canvas.save(ico, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+              print('Vytvořeno icons/app.ico')
           else:
-              text += "\n\n" + smoke
+              print('OK: icons/app.ico už existuje')
 
-          path.write_text(text, encoding="utf-8")
-          print("Smoke test byl dočasně doplněn do main.py.")
+          icns = icons / 'app.icns'
+          if not icns.exists():
+              try:
+                  canvas.save(icns, format='ICNS')
+                  print('Vytvořeno icons/app.icns')
+              except Exception as error:
+                  print(f'Upozornění: app.icns se nepodařilo vytvořit: {error}')
+          else:
+              print('OK: icons/app.icns už existuje')
           PY
 
-      - name: Smoke test přímo z Pythonu
+      - name: Build aplikace přes PyInstaller
         shell: bash
         run: |
-          python main.py --smoke-test
-
-      - name: Spustit build_release.py
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          printf "%s\n" "$VERSION" | python build_release.py
-
-      - name: Najít správný release ZIP
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          echo "Všechny ZIP soubory:"
-          find release -type f -name "*.zip" || true
-
-          ZIP_PATH="$(find release -type f -name "Sifrator_Mraveniste*${PLATFORM}*_v${VERSION}.zip" | head -n 1)"
-
-          if [ -z "$ZIP_PATH" ]; then
-            echo "CHYBA: Nebyl nalezen správný release ZIP pro platformu ${PLATFORM}."
-            echo "Hledaný vzor: Sifrator_Mraveniste*${PLATFORM}*_v${VERSION}.zip"
-            exit 1
-          fi
-
-          mkdir -p upload
-          cp "$ZIP_PATH" "upload/$(basename "$ZIP_PATH")"
-
-          echo "ZIP_PATH=upload/$(basename "$ZIP_PATH")" >> "$GITHUB_ENV"
-          echo "Správný ZIP:"
-          ls -lh upload/
-
-      - name: Otestovat ZIP balíček
-        shell: bash
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          set -e
-
-          echo "Testuji ZIP: $ZIP_PATH"
-          test -f "$ZIP_PATH"
-          test -s "$ZIP_PATH"
-
-          rm -rf test_unpack
-          mkdir -p test_unpack
-
           python - <<'PY'
           import os
-          import zipfile
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
 
-          zip_path = os.environ["ZIP_PATH"]
-          out_dir = "test_unpack"
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          platform_key = '${{ matrix.platform }}'
+          sep = ';' if os.name == 'nt' else ':'
 
-          with zipfile.ZipFile(zip_path, "r") as z:
-              z.extractall(out_dir)
+          for folder in ('build', 'dist'):
+              path = Path(folder)
+              if path.exists():
+                  shutil.rmtree(path, ignore_errors=True)
 
-          print("ZIP rozbalen.")
+          spec = Path(f'{app_name}.spec')
+          if spec.exists():
+              spec.unlink()
+
+          cmd = [
+              sys.executable, '-m', 'PyInstaller',
+              '--noconfirm',
+              '--clean',
+              '--onedir',
+              '--windowed',
+              '--name', app_name,
+          ]
+
+          if os.name == 'nt':
+              cmd += ['--contents-directory', '.']
+              icon = Path('icons/app.ico')
+          else:
+              icon = Path('icons/app.icns')
+
+          if icon.exists():
+              cmd += ['--icon', str(icon)]
+
+          cmd += [
+              '--hidden-import', 'pirate_key_renderer',
+              '--hidden-import', 'update_manager',
+              '--add-data', f'icons{sep}icons',
+              '--add-data', f'logika sifer{sep}logika sifer',
+              '--add-data', f'update.json{sep}.',
+              '--add-data', f'update_manager.py{sep}.',
+              '--add-data', f'pirate_key_renderer.py{sep}.',
+              'main.py',
+          ]
+
+          print(' '.join(cmd))
+          subprocess.run(cmd, check=True)
           PY
 
-          if [ "$PLATFORM" = "windows-x64" ]; then
-            EXE_PATH="$(find test_unpack -type f -name "Sifrator_Mraveniste*.exe" | head -n 1)"
-
-            if [ -z "$EXE_PATH" ]; then
-              echo "CHYBA: V ZIPu není EXE soubor."
-              exit 1
-            fi
-
-            echo "Nalezeno EXE: $EXE_PATH"
-            "$EXE_PATH" --smoke-test
-
-          else
-            APP_PATH="$(find test_unpack -type d -name "Sifrator_Mraveniste*.app" | head -n 1)"
-
-            if [ -z "$APP_PATH" ]; then
-              echo "CHYBA: V ZIPu není .app balíček."
-              exit 1
-            fi
-
-            APP_BIN="$APP_PATH/Contents/MacOS/Sifrator_Mraveniste"
-
-            if [ ! -f "$APP_BIN" ]; then
-              echo "CHYBA: V .app není hlavní spustitelný soubor."
-              echo "Hledáno: $APP_BIN"
-              exit 1
-            fi
-
-            chmod +x "$APP_BIN"
-            file "$APP_BIN"
-
-            "$APP_BIN" --smoke-test
-
-            codesign --force --deep --sign - "$APP_PATH"
-            codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          fi
-
-      - name: Vypočítat SHA256
+      - name: Podepsat macOS aplikaci ad-hoc
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          SHA="$(python - <<'PY'
+          codesign --force --deep --sign - "dist/${APP_NAME}.app"
+          codesign --verify --deep --strict --verbose=2 "dist/${APP_NAME}.app"
+          file "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+
+      - name: Smoke test hotové aplikace
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          platform_key = '${{ matrix.platform }}'
+
+          if platform_key == 'windows-x64':
+              exe = Path('dist') / app_name / f'{app_name}.exe'
+              if not exe.exists():
+                  raise SystemExit(f'Chybí EXE: {exe}')
+              subprocess.run([str(exe), '--smoke-test'], check=True)
+          else:
+              exe = Path('dist') / f'{app_name}.app' / 'Contents' / 'MacOS' / app_name
+              if not exe.exists():
+                  raise SystemExit(f'Chybí macOS spustitelný soubor: {exe}')
+              subprocess.run([str(exe), '--smoke-test'], check=True)
+          PY
+
+      - name: Zabalit a ověřit ZIP
+        shell: bash
+        run: |
+          python - <<'PY'
           import hashlib
           import os
+          import shutil
+          import subprocess
+          import tempfile
+          import zipfile
+          from pathlib import Path
 
-          path = os.environ["ZIP_PATH"]
-          h = hashlib.sha256()
-          with open(path, "rb") as f:
-              for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                  h.update(chunk)
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+          version = os.environ['VERSION']
+          platform_key = '${{ matrix.platform }}'
+          release = Path('release')
+          release.mkdir(exist_ok=True)
+          zip_name = f'{app_name}_{platform_key}_v{version}.zip'
+          zip_path = release / zip_name
 
-          print(h.hexdigest())
+          if zip_path.exists():
+              zip_path.unlink()
+
+          if platform_key == 'windows-x64':
+              src = Path('dist') / app_name
+              exe = src / f'{app_name}.exe'
+              if not exe.exists():
+                  raise SystemExit(f'Chybí EXE: {exe}')
+              with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+                  for path in src.rglob('*'):
+                      if path.is_file():
+                          zf.write(path, path.relative_to(src))
+          else:
+              src = Path('dist') / f'{app_name}.app'
+              if not src.exists():
+                  raise SystemExit(f'Chybí APP: {src}')
+              subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(src), str(zip_path)], check=True)
+
+          if zip_path.stat().st_size < 1024 * 1024:
+              raise SystemExit(f'ZIP je podezřele malý: {zip_path.stat().st_size} B')
+          if zip_path.stat().st_size > 500 * 1024 * 1024:
+              raise SystemExit(f'ZIP je podezřele velký: {zip_path.stat().st_size} B')
+
+          with tempfile.TemporaryDirectory() as td:
+              tmp = Path(td)
+              with zipfile.ZipFile(zip_path, 'r') as zf:
+                  zf.extractall(tmp)
+              if platform_key == 'windows-x64':
+                  expected = tmp / f'{app_name}.exe'
+              else:
+                  expected = tmp / f'{app_name}.app'
+              if not expected.exists():
+                  raise SystemExit(f'ZIP má špatnou strukturu, chybí: {expected}')
+
+          sha = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+          sha_file = release / f'{zip_name}.sha256'
+          sha_file.write_text(f'{sha}  {zip_name}\n', encoding='utf-8')
+
+          print(f'ZIP: {zip_path}')
+          print(f'SHA256: {sha}')
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+              f.write(f'### {platform_key}\n')
+              f.write(f'- ZIP: `{zip_name}`\n')
+              f.write(f'- SHA256: `{sha}`\n')
+              f.write(f'- Velikost: `{zip_path.stat().st_size}` B\n\n')
           PY
-          )"
 
-          echo "SHA256=$SHA" >> "$GITHUB_ENV"
-          echo "SHA256: $SHA"
-
-      - name: Zapsat souhrn testu
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          {
-            echo "## Výsledek buildu: ${PLATFORM}"
-            echo ""
-            echo "- Verze: v${VERSION}"
-            echo "- Runner: ${{ matrix.os }}"
-            echo "- ZIP: $(basename "$ZIP_PATH")"
-            echo "- SHA256: $SHA256"
-            echo "- Stav: ✅ Build a smoke test prošel"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Uložit ZIP jako artifact pro finální upload
-        uses: actions/upload-artifact@v4
+      - name: Nahrát artifact pro release
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: upload/*.zip
+          path: |
+            release/*.zip
+            release/*.sha256
           if-no-files-found: error
 
   summary:
-    name: Souhrn testů
-    runs-on: ubuntu-latest
+    name: Souhrn testu
     needs: build
-    if: always()
+    runs-on: ubuntu-latest
 
     steps:
+      - name: Stáhnout artifacty
+        uses: actions/download-artifact@v7
+        with:
+          path: all-artifacts
+          merge-multiple: true
+
       - name: Vypsat výsledek
         shell: bash
-        env:
-          BUILD_RESULT: ${{ needs.build.result }}
-          VERSION: ${{ inputs.version }}
-          MODE: ${{ inputs.mode }}
         run: |
-          {
-            echo "## Souhrn vydání v${VERSION}"
-            echo ""
-            echo "- Režim: ${MODE}"
-            echo "- Výsledek buildů a testů: ${BUILD_RESULT}"
-            echo ""
-            if [ "$BUILD_RESULT" = "success" ]; then
-              echo "✅ Všechny platformy prošly."
-              if [ "$MODE" = "release_after_approval" ]; then
-                echo ""
-                echo "Další krok: GitHub se zastaví na schválení prostředí **release-approval**."
-                echo "Po schválení se vytvoří GitHub Release a aktualizuje update.json."
-              else
-                echo ""
-                echo "Režim je **test_only**, takže se nic nepublikuje."
-              fi
-            else
-              echo "❌ Některý build nebo test selhal. Release se nevytvoří."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$BUILD_RESULT" != "success" ]; then
-            exit 1
-          fi
+          echo "Stažené soubory:"
+          find all-artifacts -type f -maxdepth 2 -print
+          echo "### Souhrn buildu" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Režim: `${{ inputs.mode }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Verze: `${{ inputs.version }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Všechny platformní buildy doběhly úspěšně." >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish release and update.json
-    runs-on: ubuntu-latest
-    needs:
-      - build
-      - summary
+    needs: summary
     if: ${{ inputs.mode == 'release_after_approval' }}
-
-    # Tady se workflow zastaví a počká na tvoje ruční schválení.
-    # V repozitáři musí existovat Environment s názvem: release-approval
-    environment:
-      name: release-approval
+    runs-on: ubuntu-latest
+    environment: release-approval
 
     steps:
       - name: Stáhnout repozitář
         uses: actions/checkout@v6
-
-      - name: Stáhnout ZIPy z buildu
-        uses: actions/download-artifact@v4
         with:
-          path: all-zips
+          fetch-depth: 0
+
+      - name: Stáhnout artifacty
+        uses: actions/download-artifact@v7
+        with:
+          path: all-artifacts
           merge-multiple: true
 
-      - name: Zkontrolovat ZIPy
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          echo "Stažené ZIPy:"
-          find all-zips -type f -name "*.zip" -print
-
-          WIN_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*windows-x64*_v${VERSION}.zip" | head -n 1)"
-          MAC_ARM_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*macos-arm64*_v${VERSION}.zip" | head -n 1)"
-          MAC_X64_ZIP="$(find all-zips -type f -name "Sifrator_Mraveniste*macos-x64*_v${VERSION}.zip" | head -n 1)"
-
-          if [ -z "$WIN_ZIP" ]; then
-            echo "CHYBA: Chybí Windows ZIP."
-            exit 1
-          fi
-
-          if [ -z "$MAC_ARM_ZIP" ]; then
-            echo "CHYBA: Chybí macOS ARM64 ZIP."
-            exit 1
-          fi
-
-          if [ -z "$MAC_X64_ZIP" ]; then
-            echo "CHYBA: Chybí macOS x64 ZIP."
-            exit 1
-          fi
-
-          echo "WIN_ZIP=$WIN_ZIP" >> "$GITHUB_ENV"
-          echo "MAC_ARM_ZIP=$MAC_ARM_ZIP" >> "$GITHUB_ENV"
-          echo "MAC_X64_ZIP=$MAC_X64_ZIP" >> "$GITHUB_ENV"
-
-          echo "WIN_NAME=$(basename "$WIN_ZIP")" >> "$GITHUB_ENV"
-          echo "MAC_ARM_NAME=$(basename "$MAC_ARM_ZIP")" >> "$GITHUB_ENV"
-          echo "MAC_X64_NAME=$(basename "$MAC_X64_ZIP")" >> "$GITHUB_ENV"
-
-          echo "WIN_SHA=$(sha256sum "$WIN_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
-          echo "MAC_ARM_SHA=$(sha256sum "$MAC_ARM_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
-          echo "MAC_X64_SHA=$(sha256sum "$MAC_X64_ZIP" | awk '{print $1}')" >> "$GITHUB_ENV"
-
-      - name: Vytvořit update.json
+      - name: Připravit update.json a SHA256SUMS.txt
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
           REPOSITORY: ${{ github.repository }}
         run: |
           python - <<'PY'
+          import hashlib
           import json
           import os
+          from pathlib import Path
 
-          version = os.environ["VERSION"]
-          repo = os.environ["REPOSITORY"]
-          tag = f"v{version}"
-          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+          version = os.environ['VERSION']
+          repo = os.environ['REPOSITORY']
+          tag = f'v{version}'
+          base_url = f'https://github.com/{repo}/releases/download/{tag}'
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
+
+          root = Path('all-artifacts')
+          required = ['windows-x64', 'macos-arm64', 'macos-x64']
+          platforms = {}
+          sha_lines = []
+
+          for platform_key in required:
+              matches = sorted(root.rglob(f'{app_name}_{platform_key}_v{version}.zip'))
+              if not matches:
+                  raise SystemExit(f'Chybí ZIP pro {platform_key}')
+              zip_path = matches[0]
+              sha = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+              file_name = zip_path.name
+              platforms[platform_key] = {
+                  'package_url': f'{base_url}/{file_name}',
+                  'sha256': sha,
+                  'file_name': file_name,
+              }
+              sha_lines.append(f'{sha}  {file_name}')
+              print(f'{platform_key}: {file_name} {sha}')
 
           data = {
-              "version": version,
-              "notes": f"Nová verze {version}.",
-              "platforms": {
-                  "windows-x64": {
-                      "package_url": f"{base_url}/{os.environ['WIN_NAME']}",
-                      "sha256": os.environ["WIN_SHA"],
-                      "file_name": os.environ["WIN_NAME"],
-                  },
-                  "macos-arm64": {
-                      "package_url": f"{base_url}/{os.environ['MAC_ARM_NAME']}",
-                      "sha256": os.environ["MAC_ARM_SHA"],
-                      "file_name": os.environ["MAC_ARM_NAME"],
-                  },
-                  "macos-x64": {
-                      "package_url": f"{base_url}/{os.environ['MAC_X64_NAME']}",
-                      "sha256": os.environ["MAC_X64_SHA"],
-                      "file_name": os.environ["MAC_X64_NAME"],
-                  },
-              },
+              'version': version,
+              'notes': f'Nová verze {version}.',
+              'platforms': platforms,
           }
 
-          with open("update.json", "w", encoding="utf-8") as f:
-              json.dump(data, f, ensure_ascii=False, indent=2)
-              f.write("\n")
+          Path('update.json').write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          Path('SHA256SUMS.txt').write_text('\n'.join(sha_lines) + '\n', encoding='utf-8')
 
-          print(json.dumps(data, ensure_ascii=False, indent=2))
+          if not Path('README_PRVNI_SPUSTENI.txt').exists():
+              Path('README_PRVNI_SPUSTENI.txt').write_text('Šifrátor Mraveniště – první spuštění\n', encoding='utf-8')
           PY
+
+      - name: Vytvořit poznámky k release
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cat > RELEASE_NOTES.md <<EOF_NOTES
+          Nová verze $VERSION.
+
+          Balíčky:
+          - Windows x64
+          - macOS Apple Silicon arm64
+          - macOS Intel x64
+
+          Součástí release je také:
+          - update.json
+          - SHA256SUMS.txt
+          - README_PRVNI_SPUSTENI.txt
+          EOF_NOTES
 
       - name: Vytvořit nebo najít GitHub Release
         shell: bash
@@ -475,73 +476,32 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           TAG="v$VERSION"
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG už existuje."
           else
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --notes "Nová verze $VERSION."
+            gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md
           fi
 
-      - name: Smazat špatné nebo staré assety v Release
+      - name: Nahrát soubory do Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           TAG="v$VERSION"
+          gh release upload "$TAG" all-artifacts/*.zip update.json SHA256SUMS.txt README_PRVNI_SPUSTENI.txt --clobber
 
-          gh release delete-asset "$TAG" "base_library.zip" -y || true
-
-          gh release delete-asset "$TAG" "$WIN_NAME" -y || true
-          gh release delete-asset "$TAG" "$MAC_ARM_NAME" -y || true
-          gh release delete-asset "$TAG" "$MAC_X64_NAME" -y || true
-          gh release delete-asset "$TAG" "update.json" -y || true
-
-      - name: Nahrát správné ZIPy do GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          TAG="v$VERSION"
-
-          gh release upload "$TAG" "$WIN_ZIP" --clobber
-          gh release upload "$TAG" "$MAC_ARM_ZIP" --clobber
-          gh release upload "$TAG" "$MAC_X64_ZIP" --clobber
-          gh release upload "$TAG" update.json --clobber
-
-      - name: Commitnout update.json do repozitáře
+      - name: Commitnout update.json a SHA256SUMS.txt
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add update.json
-
+          git add update.json SHA256SUMS.txt
           if git diff --cached --quiet; then
-            echo "update.json se nezměnil."
+            echo "update.json / SHA256SUMS.txt se nezměnily."
           else
             git commit -m "Update release metadata v$VERSION"
             git push
           fi
-
-      - name: Souhrn publikace
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          {
-            echo "## Release publikován"
-            echo ""
-            echo "✅ Release v${VERSION} byl vytvořen / aktualizován."
-            echo ""
-            echo "Nahrané soubory:"
-            echo "- $WIN_NAME"
-            echo "- $MAC_ARM_NAME"
-            echo "- $MAC_X64_NAME"
-            echo "- update.json"
-          } >> "$GITHUB_STEP_SUMMARY"
