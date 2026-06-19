@@ -450,26 +450,192 @@ jobs:
               Path('README_PRVNI_SPUSTENI.txt').write_text('Šifrátor Mraveniště – první spuštění\n', encoding='utf-8')
           PY
 
-      - name: Vytvořit poznámky k release
+      - name: Vytvořit profesionální poznámky k release
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
-          cat > RELEASE_NOTES.md <<EOF_NOTES
-          Nová verze $VERSION.
+          python - <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
 
-          Balíčky:
-          - Windows x64
-          - macOS Apple Silicon arm64
-          - macOS Intel x64
+          version = os.environ['VERSION']
+          repo = os.environ['REPOSITORY']
+          server_url = os.environ.get('GITHUB_SERVER_URL', 'https://github.com')
+          tag = f'v{version}'
+          app_name = os.environ.get('APP_NAME', 'Sifrator_Mraveniste')
 
-          Součástí release je také:
-          - update.json
-          - SHA256SUMS.txt
-          - README_PRVNI_SPUSTENI.txt
-          EOF_NOTES
+          def run_git(args, default=''):
+              try:
+                  return subprocess.check_output(['git', *args], text=True, encoding='utf-8', errors='replace').strip()
+              except Exception:
+                  return default
 
-      - name: Vytvořit nebo najít GitHub Release
+          def version_key(value):
+              value = value.lstrip('vV')
+              parts = re.findall(r'\d+', value)
+              nums = tuple(int(x) for x in parts[:4])
+              return nums + (0,) * (4 - len(nums))
+
+          tags_raw = run_git(['tag', '--list', 'v*', '--sort=version:refname'])
+          tags = [line.strip() for line in tags_raw.splitlines() if line.strip()]
+          current_key = version_key(tag)
+          older_tags = [t for t in tags if version_key(t) < current_key]
+          previous_tag = older_tags[-1] if older_tags else ''
+
+          if previous_tag:
+              commit_range = f'{previous_tag}..HEAD'
+              full_changelog = f'{server_url}/{repo}/compare/{previous_tag}...{tag}'
+          else:
+              commit_range = 'HEAD'
+              full_changelog = f'{server_url}/{repo}/commits/{os.environ.get("GITHUB_SHA", "HEAD")}'
+
+          log_format = '%h%x09%s%x09%an'
+          if previous_tag:
+              commits_raw = run_git(['log', '--no-merges', '--pretty=format:' + log_format, commit_range])
+          else:
+              commits_raw = run_git(['log', '--no-merges', '--pretty=format:' + log_format, '-n', '50'])
+
+          categories = {
+              'Nové funkce a UI': [],
+              'Opravy chyb': [],
+              'Build, testy a release': [],
+              'Dokumentace': [],
+              'Ostatní změny': [],
+          }
+
+          for line in commits_raw.splitlines():
+              parts = line.split('	')
+              if len(parts) < 2:
+                  continue
+              sha, subject = parts[0], parts[1]
+              subject_clean = subject.strip()
+              lower = subject_clean.lower()
+              item = f'- `{sha}` {subject_clean}'
+              if lower.startswith(('feat:', 'feature:', 'ui:', 'add:', 'new:')) or 'responsive' in lower or 'responz' in lower:
+                  categories['Nové funkce a UI'].append(item)
+              elif lower.startswith(('fix:', 'bug:', 'hotfix:', 'oprava:', 'repair:')) or 'fix' in lower or 'oprav' in lower:
+                  categories['Opravy chyb'].append(item)
+              elif lower.startswith(('build:', 'ci:', 'actions:', 'release:', 'workflow:', 'test:')) or any(word in lower for word in ['github actions', 'workflow', 'build', 'release', 'test']):
+                  categories['Build, testy a release'].append(item)
+              elif lower.startswith(('docs:', 'doc:', 'readme:')) or 'readme' in lower or 'návod' in lower or 'navod' in lower:
+                  categories['Dokumentace'].append(item)
+              else:
+                  categories['Ostatní změny'].append(item)
+
+          def file_size(path: Path) -> str:
+              size = path.stat().st_size
+              units = ['B', 'KB', 'MB', 'GB']
+              value = float(size)
+              for unit in units:
+                  if value < 1024 or unit == units[-1]:
+                      if unit == 'B':
+                          return f'{int(value)} {unit}'
+                      return f'{value:.1f} {unit}'
+                  value /= 1024
+              return f'{size} B'
+
+          zips = []
+          root = Path('all-artifacts')
+          for platform_key, label, target in [
+              ('windows-x64', 'Windows x64', 'Windows 10/11 x64'),
+              ('macos-arm64', 'macOS Apple Silicon arm64', 'Mac M1/M2/M3/M4/A18 Pro'),
+              ('macos-x64', 'macOS Intel x64', 'Starší Intel Mac'),
+          ]:
+              matches = sorted(root.rglob(f'{app_name}_{platform_key}_v{version}.zip'))
+              if not matches:
+                  raise SystemExit(f'Chybí ZIP pro {platform_key}')
+              path = matches[0]
+              sha = hashlib.sha256(path.read_bytes()).hexdigest()
+              zips.append((label, path.name, target, file_size(path), sha))
+
+          lines = []
+          lines.append(f'# Šifrátor Mraveniště {tag}')
+          lines.append('')
+          lines.append(f'Nová verze aplikace **Šifrátor Mraveniště** `{tag}`.')
+          lines.append('')
+          lines.append('## Stav vydání')
+          lines.append('')
+          lines.append('| Kontrola | Stav |')
+          lines.append('|---|---|')
+          lines.append('| Windows x64 build | ✅ OK |')
+          lines.append('| macOS Apple Silicon arm64 build | ✅ OK |')
+          lines.append('| macOS Intel x64 build | ✅ OK |')
+          lines.append('| Smoke test zdrojových souborů | ✅ OK |')
+          lines.append('| Smoke test hotových aplikací | ✅ OK |')
+          lines.append('| ZIP struktura | ✅ OK |')
+          lines.append('| SHA256 kontrola | ✅ OK |')
+          lines.append('| update.json | ✅ OK |')
+          lines.append('')
+          lines.append('## Stažení')
+          lines.append('')
+          lines.append('| Systém | Soubor | Pro koho | Velikost |')
+          lines.append('|---|---|---|---:|')
+          for label, filename, target, size, sha in zips:
+              lines.append(f'| {label} | `{filename}` | {target} | {size} |')
+          lines.append('')
+          lines.append('## Co je nového')
+          lines.append('')
+          any_commit = False
+          for title, items in categories.items():
+              if not items:
+                  continue
+              any_commit = True
+              lines.append(f'### {title}')
+              lines.append('')
+              for item in items[:30]:
+                  lines.append(item)
+              if len(items) > 30:
+                  lines.append(f'- …a dalších {len(items) - 30} změn')
+              lines.append('')
+          if not any_commit:
+              lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam commitů.')
+              lines.append('')
+          lines.append('## SHA256')
+          lines.append('')
+          lines.append('```text')
+          for label, filename, target, size, sha in zips:
+              lines.append(f'{sha}  {filename}')
+          lines.append('```')
+          lines.append('')
+          lines.append('## První spuštění')
+          lines.append('')
+          lines.append('- **Windows:** stáhni `windows-x64`, rozbal ZIP a spusť aplikaci.')
+          lines.append('- **Mac Apple Silicon:** stáhni `macos-arm64`.')
+          lines.append('- **Mac Intel:** stáhni `macos-x64`.')
+          lines.append('')
+          lines.append('Aplikace pro macOS zatím není notarizovaná přes Apple Developer Program. Pokud macOS zobrazí upozornění o neidentifikovaném vývojáři, postupuj podle souboru `README_PRVNI_SPUSTENI.txt`.')
+          lines.append('')
+          lines.append('## Automatické aktualizace')
+          lines.append('')
+          lines.append('Součástí vydání je `update.json`, který používá automatický updater aplikace.')
+          lines.append('')
+          if previous_tag:
+              lines.append(f'## Porovnání změn')
+              lines.append('')
+              lines.append(f'**Full changelog:** {full_changelog}')
+          else:
+              lines.append('## Porovnání změn')
+              lines.append('')
+              lines.append('Toto je první tag, který workflow našlo pro porovnání.')
+
+          notes = '\n'.join(lines).strip() + '\n'
+          Path('RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
+          print(notes)
+
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary_path:
+              with open(summary_path, 'a', encoding='utf-8') as f:
+                  f.write(notes)
+          PY
+
+      - name: Vytvořit nebo aktualizovat GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -477,7 +643,8 @@ jobs:
         run: |
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG už existuje."
+            echo "Release $TAG už existuje, aktualizuji poznámky."
+            gh release edit "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md
           else
             gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md
           fi
