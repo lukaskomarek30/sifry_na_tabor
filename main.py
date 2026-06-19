@@ -1176,7 +1176,9 @@ class SifratorSkinWidget(QWidget):
         self.result_mode = None
         self.cipher_buttons = []
 
-        self.setMinimumSize(1200, 675)
+        # Minimální velikost samotného skinu je snížená kvůli malým displejům.
+        # Skutečná čitelnost na malých oknech se řeší přes scrollovací obal v SifratorWindow.
+        self.setMinimumSize(800, 600)
         self.create_widgets()
         self.print_missing_assets()
         self.update_layout_positions()
@@ -7926,11 +7928,49 @@ class SifratorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"ŠIFRÁTOR MRAVENIŠTĚ - PIRÁTI Z KARIBIKU v{APP_VERSION}")
-        self.resize(BASE_W, BASE_H)
-        self.setMinimumSize(1200, 675)
 
+        # Responzivní obal pro celé pirátské UI.
+        # Důvod: samotný skin má poměr 1672 × 941 a na menších MacBoocích / noteboocích
+        # se původně okno nevešlo na obrazovku. ScrollArea nechá zachovat vzhled, ale
+        # zároveň dovolí použití i na 800 × 600 bez oříznuté pravé části.
         self.central = SifratorSkinWidget()
-        self.setCentralWidget(self.central)
+        self.central.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        self.ui_scroll_area = QScrollArea(self)
+        self.ui_scroll_area.setWidget(self.central)
+        self.ui_scroll_area.setWidgetResizable(False)
+        self.ui_scroll_area.setFrameShape(QScrollArea.NoFrame)
+        self.ui_scroll_area.setAlignment(Qt.AlignCenter)
+        self.ui_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.ui_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.ui_scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: #06131b;
+                border: none;
+            }
+            QScrollBar:vertical, QScrollBar:horizontal {
+                background: rgba(20, 17, 12, 160);
+                border-radius: 5px;
+                margin: 2px;
+            }
+            QScrollBar:vertical { width: 12px; }
+            QScrollBar:horizontal { height: 12px; }
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                background: #b89b68;
+                border-radius: 5px;
+                min-height: 34px;
+                min-width: 34px;
+            }
+            QScrollBar::add-line, QScrollBar::sub-line {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+        self.setCentralWidget(self.ui_scroll_area)
+
+        self.setMinimumSize(800, 600)
+        self.resize(*self._initial_window_size())
+        self._apply_responsive_canvas_size()
 
         # Ikona celé aplikace z icons/logo.png / icons/app_icon.ico.
         app_icon_path = make_app_icon_from_logo(self.central.icons_path)
@@ -7941,9 +7981,67 @@ class SifratorWindow(QMainWindow):
             if app is not None:
                 app.setWindowIcon(app_icon)
 
+        # Na malých obrazovkách se aplikace otevře rovnou maximalizovaná, aby se
+        # využila celá dostupná plocha mimo horní lištu a Dock.
+        QTimer.singleShot(0, self._maximize_on_small_screen_if_needed)
+
         # Kontrola aktualizací až po zobrazení okna.
         # Když není internet nebo není novější verze, nic nevyskočí.
         QTimer.singleShot(1500, self.check_updates_after_start)
+
+    def _available_screen_geometry(self):
+        app = QApplication.instance()
+        screen = app.primaryScreen() if app is not None else None
+        if screen is None:
+            return QRect(0, 0, BASE_W, BASE_H)
+        return screen.availableGeometry()
+
+    def _initial_window_size(self):
+        available = self._available_screen_geometry()
+        # Okno se na startu nikdy nesnaží být větší než dostupná plocha obrazovky.
+        # Na 4K a větších monitorech zůstane rozumně velké, aby UI nebylo obří.
+        target_w = min(BASE_W, max(800, int(available.width() * 0.96)))
+        target_h = min(BASE_H, max(600, int(available.height() * 0.92)))
+        return target_w, target_h
+
+    def _responsive_canvas_size(self):
+        viewport = self.ui_scroll_area.viewport().size() if hasattr(self, "ui_scroll_area") else self.size()
+        viewport_w = max(1, viewport.width())
+        viewport_h = max(1, viewport.height())
+
+        # Malý režim: UI se drží čitelnější minimální pracovní plochy a okno dostane scroll.
+        if viewport_w < 1000 or viewport_h < 620:
+            return QSize(1050, 650)
+
+        # Kompaktní notebookový režim: vejde se na menší MacBooky / HD displeje bez oříznutí.
+        if viewport_w < 1300 or viewport_h < 760:
+            return QSize(max(1050, viewport_w), max(650, viewport_h))
+
+        # Normální režim: UI se přizpůsobí oknu až do původního návrhu.
+        if viewport_w < BASE_W or viewport_h < BASE_H:
+            return QSize(max(1200, viewport_w), max(675, viewport_h))
+
+        # Velké a 4K monitory: držíme původní rozumný návrh uprostřed obrazovky.
+        return QSize(BASE_W, BASE_H)
+
+    def _apply_responsive_canvas_size(self):
+        if not hasattr(self, "central"):
+            return
+        size = self._responsive_canvas_size()
+        if self.central.size() != size:
+            self.central.setFixedSize(size)
+        self.central.update_layout_positions()
+        self.central.update()
+
+    def _maximize_on_small_screen_if_needed(self):
+        available = self._available_screen_geometry()
+        if available.width() < 1300 or available.height() < 760:
+            self.showMaximized()
+        self._apply_responsive_canvas_size()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._apply_responsive_canvas_size)
 
     def check_updates_after_start(self):
         update_data = update_manager.check_for_update(APP_VERSION)
