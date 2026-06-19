@@ -1361,3 +1361,404 @@ def show_key_dialog_nonblocking(parent: QWidget | None, cipher_name: str, module
 # Původní veřejné API zůstává zachované a interně používá neblokující dialog.
 def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
     return show_key_dialog_nonblocking(parent, cipher_name, module, context)
+
+
+# ============================================================
+# TRVALÁ DISKOVÁ CACHE KLÍČŮ ŠIFER
+# ============================================================
+# Dosavadní cache byla pouze v paměti nebo v dočasné složce. Po vypnutí
+# aplikace se ztratila a při dalším spuštění se klíče musely znovu renderovat.
+# Tato vrstva ukládá hotové PNG klíče do uživatelské cache složky.
+#
+# Cache je navázaná na APP_VERSION. Když se po aktualizaci verze změní,
+# složka cache se automaticky promaže a klíče se vytvoří znovu.
+
+_PERSISTENT_KEY_CACHE_FORMAT = 1
+_PERSISTENT_KEY_CACHE_APP_VERSION = "0.0.0"
+_PERSISTENT_ORIGINAL_SAVE_KEY_PNG = save_key_png_for_module
+_PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE = preload_key_cache_for_module
+_PERSISTENT_ORIGINAL_SHOW_KEY_DIALOG_NONBLOCKING = show_key_dialog_nonblocking
+
+
+def _persistent_debug(message: str) -> None:
+    """Tichý diagnostický výpis cache. Nevadí, když se nepodaří zapsat."""
+    try:
+        path = os.path.join(tempfile.gettempdir(), "sifrator_update_debug.log")
+        import time
+        with open(path, "a", encoding="utf-8") as file:
+            file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Cache klíčů] {message}\n")
+    except Exception:
+        pass
+
+
+def _persistent_key_cache_root() -> str:
+    """Vrátí systémovou cache složku pro klíče šifer."""
+    try:
+        import sys
+        if sys.platform.startswith("win"):
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+            return os.path.join(base, "Sifrator_Mraveniste", "key_cache")
+        if sys.platform == "darwin":
+            return os.path.join(os.path.expanduser("~"), "Library", "Caches", "Sifrator_Mraveniste", "key_cache")
+        return os.path.join(os.path.expanduser("~"), ".cache", "Sifrator_Mraveniste", "key_cache")
+    except Exception:
+        return os.path.join(tempfile.gettempdir(), "Sifrator_Mraveniste", "key_cache")
+
+
+def get_persistent_key_cache_dir() -> str:
+    """Veřejná pomocná funkce pro zobrazení cesty cache v logu/UI."""
+    return _persistent_key_cache_root()
+
+
+def _persistent_safe_name(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() else "_" for ch in str(value or "klic"))
+    safe = safe.strip("_") or "klic"
+    return safe[:80]
+
+
+def _persistent_freeze(value):
+    if isinstance(value, dict):
+        return {str(k): _persistent_freeze(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_persistent_freeze(v) for v in value]
+    return str(value)
+
+
+def _persistent_file_signature(path: str) -> dict[str, object]:
+    try:
+        if path and os.path.exists(path):
+            stat = os.stat(path)
+            return {
+                "name": os.path.basename(path),
+                "mtime": int(stat.st_mtime),
+                "size": int(stat.st_size),
+            }
+    except Exception:
+        pass
+    return {"name": os.path.basename(path or ""), "mtime": 0, "size": 0}
+
+
+def _persistent_module_signature(module: Any) -> dict[str, object]:
+    return _persistent_file_signature(getattr(module, "__file__", "") if module is not None else "")
+
+
+def _persistent_renderer_signature() -> dict[str, object]:
+    return _persistent_file_signature(__file__)
+
+
+def _persistent_cache_info_path() -> str:
+    return os.path.join(_persistent_key_cache_root(), "cache_info.json")
+
+
+def _persistent_prepare_cache_dir() -> str:
+    """Připraví cache složku a promaže ji při změně verze/formátu."""
+    root = _persistent_key_cache_root()
+    info_path = os.path.join(root, "cache_info.json")
+
+    expected = {
+        "app_version": str(_PERSISTENT_KEY_CACHE_APP_VERSION),
+        "cache_format": int(_PERSISTENT_KEY_CACHE_FORMAT),
+    }
+
+    try:
+        os.makedirs(root, exist_ok=True)
+
+        old = {}
+        if os.path.exists(info_path):
+            try:
+                import json
+                with open(info_path, "r", encoding="utf-8") as file:
+                    old = json.load(file) if file else {}
+            except Exception:
+                old = {}
+
+        if old.get("app_version") != expected["app_version"] or old.get("cache_format") != expected["cache_format"]:
+            import shutil
+            _persistent_debug(
+                "Mažu starou cache: "
+                f"old_version={old.get('app_version')}, new_version={expected['app_version']}"
+            )
+            shutil.rmtree(root, ignore_errors=True)
+            os.makedirs(root, exist_ok=True)
+
+        import json
+        with open(info_path, "w", encoding="utf-8") as file:
+            json.dump(expected, file, ensure_ascii=False, indent=2)
+    except Exception as error:
+        _persistent_debug(f"Cache složku se nepodařilo připravit: {type(error).__name__}: {error}")
+
+    return root
+
+
+def set_persistent_cache_version(app_version: str) -> None:
+    """Nastaví verzi aplikace pro diskovou cache.
+
+    Volá se z main.py po importu rendereru. Pokud se verze změnila po aktualizaci,
+    cache se automaticky smaže.
+    """
+    global _PERSISTENT_KEY_CACHE_APP_VERSION
+    version = str(app_version or "0.0.0").strip() or "0.0.0"
+    if _PERSISTENT_KEY_CACHE_APP_VERSION != version:
+        _PERSISTENT_KEY_CACHE_APP_VERSION = version
+        try:
+            _GLOBAL_KEY_PNG_CACHE.clear()
+            _GLOBAL_KEY_DATA_CACHE.clear()
+        except Exception:
+            pass
+    _persistent_prepare_cache_dir()
+
+
+def clear_persistent_key_cache() -> bool:
+    """Ručně smaže diskovou cache klíčů."""
+    try:
+        import shutil
+        root = _persistent_key_cache_root()
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            _GLOBAL_KEY_PNG_CACHE.clear()
+            _GLOBAL_KEY_DATA_CACHE.clear()
+        except Exception:
+            pass
+        _persistent_prepare_cache_dir()
+        _persistent_debug("Cache klíčů byla ručně vyčištěna.")
+        return True
+    except Exception as error:
+        _persistent_debug(f"Ruční čištění cache selhalo: {type(error).__name__}: {error}")
+        return False
+
+
+def _persistent_key_payload(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> dict[str, object]:
+    return {
+        "app_version": str(_PERSISTENT_KEY_CACHE_APP_VERSION),
+        "cache_format": int(_PERSISTENT_KEY_CACHE_FORMAT),
+        "cipher_name": str(cipher_name or ""),
+        "context": _persistent_freeze(context or {}),
+        "width": int(width or 1500),
+        "print_mode": bool(print_mode),
+        "module": _persistent_module_signature(module),
+        "renderer": _persistent_renderer_signature(),
+    }
+
+
+def _persistent_key_cache_path(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> str:
+    import hashlib
+    import json
+
+    root = _persistent_prepare_cache_dir()
+    payload = _persistent_key_payload(cipher_name, module, context, width, print_mode)
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()[:24]
+    suffix = "print" if print_mode else "ui"
+    safe_name = _persistent_safe_name(cipher_name)
+    return os.path.join(root, f"{safe_name}_{suffix}_{int(width or 1500)}_{digest}.png")
+
+
+def get_cached_key_png_path(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1500, print_mode: bool = False) -> str:
+    """Vrátí hotový PNG klíč z diskové cache, pokud existuje."""
+    try:
+        path = _persistent_key_cache_path(cipher_name, module, context, width, print_mode)
+        if path and os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+    except Exception as error:
+        _persistent_debug(f"Čtení cache selhalo: {type(error).__name__}: {error}")
+    return ""
+
+
+def get_or_create_key_png_path(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1500, print_mode: bool = False) -> str:
+    """Vrátí PNG klíč z cache, případně ho jednou vygeneruje a uloží na disk."""
+    try:
+        cache_path = _persistent_key_cache_path(cipher_name, module, context, width, print_mode)
+        if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+            _persistent_debug(f"Použito z diskové cache: {os.path.basename(cache_path)}")
+            return cache_path
+
+        _persistent_debug(f"Generuji nový klíč do diskové cache: {cipher_name}, print={print_mode}")
+        ok = bool(_PERSISTENT_ORIGINAL_SAVE_KEY_PNG(cipher_name, module, cache_path, width=width, context=context, print_mode=print_mode))
+        if ok and os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+            return cache_path
+    except Exception as error:
+        _persistent_debug(f"Vytvoření cache klíče selhalo: {type(error).__name__}: {error}")
+    return ""
+
+
+def save_key_png_for_module(cipher_name: str, module: Any, output_path: str, width: int = 1500, context: dict[str, Any] | None = None, print_mode: bool = False) -> bool:
+    """Export klíče do PNG s trvalou diskovou cache.
+
+    Pokud už je klíč jednou uložený v uživatelské cache, jen se rychle zkopíruje
+    do požadované cílové cesty. Po vypnutí a zapnutí programu tedy není nutné
+    klíč znovu renderovat.
+    """
+    try:
+        import shutil
+        cache_path = get_cached_key_png_path(cipher_name, module, context, width, print_mode)
+        if cache_path:
+            if os.path.abspath(cache_path) != os.path.abspath(output_path):
+                os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+                shutil.copy2(cache_path, output_path)
+            return True
+    except Exception as error:
+        _persistent_debug(f"Kopírování cache do cíle selhalo: {type(error).__name__}: {error}")
+
+    ok = bool(_PERSISTENT_ORIGINAL_SAVE_KEY_PNG(cipher_name, module, output_path, width=width, context=context, print_mode=print_mode))
+
+    try:
+        if ok and output_path and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            import shutil
+            cache_path = _persistent_key_cache_path(cipher_name, module, context, width, print_mode)
+            if os.path.abspath(cache_path) != os.path.abspath(output_path):
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                shutil.copy2(output_path, cache_path)
+            _persistent_debug(f"Klíč uložen do diskové cache: {os.path.basename(cache_path)}")
+    except Exception as error:
+        _persistent_debug(f"Uložení do diskové cache selhalo: {type(error).__name__}: {error}")
+
+    return ok
+
+
+def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1400) -> bool:
+    """Předpřipraví tiskový i běžný klíč do trvalé diskové cache."""
+    ok_print = bool(get_or_create_key_png_path(cipher_name, module, context=context, width=width, print_mode=True))
+    ok_ui = bool(get_or_create_key_png_path(cipher_name, module, context=context, width=width, print_mode=False))
+    if ok_print or ok_ui:
+        return True
+    try:
+        return bool(_PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE(cipher_name, module, context=context, width=width))
+    except Exception:
+        return False
+
+
+class DiskCachedPirateKeyDialog(QDialog):
+    """Dialog klíče, který umí okamžitě použít PNG z diskové cache."""
+
+    def __init__(self, cipher_name: str, module: Any, context: dict[str, Any] | None = None, parent: QWidget | None = None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QLabel
+        from PySide6.QtCore import QTimer
+
+        self.cipher_name = cipher_name
+        self.module = module
+        self.context = context
+        self.widget = None
+        self.scroll = None
+        self.png_label = None
+        self.current_png_path = ""
+        self.QLabel = QLabel
+
+        self.setWindowTitle(f"Klíč šifry – {cipher_name}")
+        self.resize(1180, 820)
+
+        self.loading_label = QLabel("Připravuji klíč…\n\nPokud už je v cache, otevře se hned.", self)
+        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setStyleSheet("color: #f3d79a; background: #1c1208; font: bold 18px Georgia; padding: 40px;")
+
+        self.save_button = QPushButton("Uložit jako PNG")
+        self.close_button = QPushButton("Zavřít")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save_png)
+        self.close_button.clicked.connect(self.close)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.save_button)
+        buttons.addWidget(self.close_button)
+
+        self.layout_root = QVBoxLayout(self)
+        self.layout_root.addWidget(self.loading_label, 1)
+        self.layout_root.addLayout(buttons)
+        self.setStyleSheet("""
+            QDialog { background: #1c1208; }
+            QPushButton {
+                color: #f3d79a;
+                background: rgba(40, 28, 14, 230);
+                border: 1px solid #c89a4c;
+                border-radius: 8px;
+                padding: 8px 18px;
+                font: bold 13px Georgia;
+            }
+            QPushButton:hover { background: rgba(75, 48, 18, 240); }
+        """)
+
+        QTimer.singleShot(60, self._load_key)
+
+    def _replace_loading_with_scroll_widget(self, widget: QWidget) -> None:
+        from PySide6.QtWidgets import QScrollArea
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setWidget(widget)
+        self.layout_root.removeWidget(self.loading_label)
+        self.loading_label.deleteLater()
+        self.layout_root.insertWidget(0, self.scroll, 1)
+        self.save_button.setEnabled(True)
+
+    def _load_key(self):
+        try:
+            png_path = get_or_create_key_png_path(self.cipher_name, self.module, context=self.context, width=1400, print_mode=False)
+            if png_path:
+                pixmap = QPixmap(png_path)
+                if not pixmap.isNull():
+                    label = self.QLabel(self)
+                    label.setAlignment(Qt.AlignCenter)
+                    label.setStyleSheet("background: #1c1208; padding: 16px;")
+                    label.setPixmap(pixmap)
+                    label.setMinimumSize(pixmap.size())
+                    self.png_label = label
+                    self.current_png_path = png_path
+                    self._replace_loading_with_scroll_widget(label)
+                    return
+        except Exception as error:
+            _persistent_debug(f"Dialog nepoužil PNG cache: {type(error).__name__}: {error}")
+
+        # Fallback na původní živý widget, kdyby PNG export selhal.
+        try:
+            data = make_key_data_from_module(self.cipher_name, self.module, self.context)
+            if not data:
+                data = {
+                    "title": f"Klíč šifry – {self.cipher_name}",
+                    "subtitle": "Šifrátor Mraveniště – pirátský klíč",
+                    "description": "Náhradní základní klíč, protože logika šifry neposkytla žádná data.",
+                    "type": "generic",
+                    "columns": 6,
+                    "items": [(letter, letter) for letter in ALPHABET],
+                }
+            self.widget = PirateKeyWidget(data)
+            self._replace_loading_with_scroll_widget(self.widget)
+        except Exception as error:
+            self.loading_label.setText(f"Klíč se nepodařilo připravit:\n\n{error}")
+
+    def save_png(self) -> None:
+        import shutil
+        path, _ = QFileDialog.getSaveFileName(self, "Uložit klíč jako PNG", "klic_sifry.png", "PNG obrázek (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        try:
+            if self.current_png_path and os.path.exists(self.current_png_path):
+                shutil.copy2(self.current_png_path, path)
+                QMessageBox.information(self, "Uloženo", f"Klíč byl uložen:\n{path}")
+                return
+        except Exception:
+            pass
+
+        if self.widget is None:
+            QMessageBox.information(self, "Klíč se připravuje", "Počkej, až se klíč dokončí.")
+            return
+
+        pixmap = QPixmap(self.widget.size())
+        pixmap.fill(Qt.transparent)
+        self.widget.render(pixmap)
+        if pixmap.save(path, "PNG"):
+            QMessageBox.information(self, "Uloženo", f"Klíč byl uložen:\n{path}")
+        else:
+            QMessageBox.warning(self, "Chyba", "Klíč se nepodařilo uložit.")
+
+
+def show_key_dialog_nonblocking(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
+    dialog = DiskCachedPirateKeyDialog(cipher_name, module, context, parent)
+    dialog.exec()
+    return True
+
+
+def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
+    return show_key_dialog_nonblocking(parent, cipher_name, module, context)
