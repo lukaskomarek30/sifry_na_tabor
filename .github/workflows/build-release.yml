@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Verze bez písmene v, například 0.0.3"
+        description: "Verze bez písmene v, nebo auto = další patch podle posledního tagu"
         required: true
-        default: "0.0.3"
+        default: "auto"
       mode:
         description: "Režim spuštění"
         required: true
@@ -27,8 +27,96 @@ env:
   LANG: "en_US.UTF-8"
 
 jobs:
+  resolve-version:
+    name: Určení nové verze
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      latest_tag: ${{ steps.resolve.outputs.latest_tag }}
+      requested_version: ${{ steps.resolve.outputs.requested_version }}
+
+    steps:
+      - name: Stáhnout repozitář a tagy
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Zjistit nejnovější verzi
+        id: resolve
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          git fetch --tags --force
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          requested = (os.environ.get('REQUESTED_VERSION') or 'auto').strip()
+
+          def parse_version(value: str):
+              nums = [int(x) for x in re.findall(r'\d+', value or '')[:3]]
+              while len(nums) < 3:
+                  nums.append(0)
+              return tuple(nums)
+
+          def get_latest_tag():
+              try:
+                  raw = subprocess.check_output(
+                      ['git', 'tag', '--list', 'v*'],
+                      text=True,
+                      encoding='utf-8',
+                      errors='replace',
+                  )
+              except Exception:
+                  raw = ''
+
+              tags = [line.strip() for line in raw.splitlines() if line.strip()]
+              semver_tags = []
+              for tag in tags:
+                  if re.match(r'^v?\d+\.\d+\.\d+(?:[-_].*)?$', tag):
+                      semver_tags.append(tag)
+
+              if not semver_tags:
+                  return 'v0.0.0'
+
+              return sorted(semver_tags, key=parse_version)[-1]
+
+          latest_tag = get_latest_tag()
+
+          if requested.lower() in ('auto', 'next', 'patch', ''):
+              major, minor, patch = parse_version(latest_tag)
+              patch += 1
+              version = f'{major}.{minor}.{patch}'
+              mode_text = 'automaticky další patch verze'
+          else:
+              version = requested.lstrip('vV').strip()
+              mode_text = 'ručně zadaná verze'
+
+          if not re.match(r'^\d+\.\d+\.\d+(?:[-_][A-Za-z0-9.]+)?$', version):
+              raise SystemExit(f'Neplatný formát verze: {version}. Použij například 0.0.4 nebo auto.')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as file:
+              file.write(f'version={version}\n')
+              file.write(f'latest_tag={latest_tag}\n')
+              file.write(f'requested_version={requested}\n')
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as file:
+              file.write('## Určení verze\n\n')
+              file.write(f'- Zadaná hodnota v okně: `{requested}`\n')
+              file.write(f'- Nejnovější nalezený tag: `{latest_tag}`\n')
+              file.write(f'- Režim: `{mode_text}`\n')
+              file.write(f'- Výsledná verze pro build/release: `v{version}`\n\n')
+
+          print(f'Zadaná hodnota: {requested}')
+          print(f'Nejnovější tag: {latest_tag}')
+          print(f'Výsledná verze: v{version}')
+          PY
+
   source-check:
     name: Kontrola zdrojových souborů
+    needs: resolve-version
     runs-on: ubuntu-latest
 
     steps:
@@ -74,7 +162,7 @@ jobs:
 
   build:
     name: Build a test ${{ matrix.platform }}
-    needs: source-check
+    needs: [resolve-version, source-check]
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -106,7 +194,11 @@ jobs:
 
       - name: Nastavit verzi
         shell: bash
-        run: echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=${{ needs.resolve-version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "LATEST_TAG=${{ needs.resolve-version.outputs.latest_tag }}" >> "$GITHUB_ENV"
+          echo "Používám verzi: ${{ needs.resolve-version.outputs.version }}"
+          echo "Nejnovější tag byl: ${{ needs.resolve-version.outputs.latest_tag }}"
 
       - name: Zobrazit systém
         shell: bash
@@ -358,7 +450,7 @@ jobs:
 
   summary:
     name: Souhrn testu
-    needs: build
+    needs: [resolve-version, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -376,13 +468,15 @@ jobs:
           echo "### Souhrn buildu" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo 'Režim: `${{ inputs.mode }}`' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Verze: `${{ inputs.version }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Zadaná verze: `${{ needs.resolve-version.outputs.requested_version }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Nejnovější tag: `${{ needs.resolve-version.outputs.latest_tag }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Použitá verze: `v${{ needs.resolve-version.outputs.version }}`' >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Všechny platformní buildy doběhly úspěšně." >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish release and update.json
-    needs: summary
+    needs: [resolve-version, summary]
     if: ${{ inputs.mode == 'release_after_approval' }}
     runs-on: ubuntu-latest
     environment: release-approval
@@ -402,7 +496,7 @@ jobs:
       - name: Připravit update.json a SHA256SUMS.txt
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
           REPOSITORY: ${{ github.repository }}
         run: |
           python - <<'PY'
@@ -453,7 +547,7 @@ jobs:
       - name: Vytvořit profesionální poznámky k release
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
           REPOSITORY: ${{ github.repository }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_SHA: ${{ github.sha }}
@@ -610,7 +704,22 @@ jobs:
           lines.append('- **Mac Apple Silicon:** stáhni `macos-arm64`.')
           lines.append('- **Mac Intel:** stáhni `macos-x64`.')
           lines.append('')
-          lines.append('Aplikace pro macOS zatím není notarizovaná přes Apple Developer Program. Pokud macOS zobrazí upozornění o neidentifikovaném vývojáři, postupuj podle souboru `README_PRVNI_SPUSTENI.txt`.')
+          lines.append('Aplikace pro macOS zatím není notarizovaná přes Apple Developer Program. Pokud macOS zobrazí upozornění o neidentifikovaném vývojáři, postupuj podle souboru `README_PRVNI_SPUSTENI.md` nebo `README_PRVNI_SPUSTENI.txt`.')
+          lines.append('')
+          raw_base = f'https://raw.githubusercontent.com/{repo}/main/docs/img'
+          lines.append('### macOS – povolení prvního spuštění')
+          lines.append('')
+          lines.append('1. Pokud se zobrazí hláška o neidentifikovaném vývojáři, klikni na **OK**.')
+          lines.append('')
+          lines.append(f'![macOS blocked]({raw_base}/macos_01_blocked_unidentified_developer.png)')
+          lines.append('')
+          lines.append('2. Otevři **System Settings → Privacy & Security** a klikni na **Open Anyway**.')
+          lines.append('')
+          lines.append(f'![macOS Privacy & Security]({raw_base}/macos_03_privacy_security_open_anyway.png)')
+          lines.append('')
+          lines.append('3. Potvrď spuštění tlačítkem **Open**.')
+          lines.append('')
+          lines.append(f'![macOS Open]({raw_base}/macos_02_open_confirmation.png)')
           lines.append('')
           lines.append('## Automatické aktualizace')
           lines.append('')
@@ -639,7 +748,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -653,15 +762,29 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           TAG="v$VERSION"
-          gh release upload "$TAG" all-artifacts/*.zip update.json SHA256SUMS.txt README_PRVNI_SPUSTENI.txt --clobber
+          ASSETS=(all-artifacts/*.zip update.json SHA256SUMS.txt)
+
+          if [ -f README_PRVNI_SPUSTENI.md ]; then
+            ASSETS+=(README_PRVNI_SPUSTENI.md)
+          fi
+
+          if [ -f README_PRVNI_SPUSTENI.txt ]; then
+            ASSETS+=(README_PRVNI_SPUSTENI.txt)
+          fi
+
+          if compgen -G "docs/img/*.png" > /dev/null; then
+            ASSETS+=(docs/img/*.png)
+          fi
+
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
 
       - name: Commitnout update.json a SHA256SUMS.txt
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
