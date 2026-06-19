@@ -9223,6 +9223,86 @@ SifratorWindow.show_live_log_window = _window_show_live_log_window
 SifratorWindow.manual_check_updates = _window_manual_check_updates
 SifratorWindow.check_updates_after_start = _window_check_updates_after_start
 
+
+# ============================================================
+# TRVALÁ CACHE KLÍČŮ PODLE VERZE APLIKACE
+# ============================================================
+# Renderer dostane aktuální APP_VERSION. Pokud se po aktualizaci verze změní,
+# pirate_key_renderer.py automaticky smaže starou diskovou cache klíčů.
+
+try:
+    _PERSISTENT_CACHE_ORIGINAL_GET_RENDERER = get_pirate_key_renderer
+
+    def get_pirate_key_renderer():
+        renderer = _PERSISTENT_CACHE_ORIGINAL_GET_RENDERER()
+        try:
+            if renderer is not None and hasattr(renderer, "set_persistent_cache_version"):
+                renderer.set_persistent_cache_version(APP_VERSION)
+        except Exception as error:
+            try:
+                _sifrator_debug_log(f"Cache klíčů: nastavení verze selhalo: {type(error).__name__}: {error}")
+            except Exception:
+                pass
+        return renderer
+except Exception:
+    pass
+
+
+def _clear_persistent_key_cache_from_main() -> bool:
+    """Ručně smaže trvalou cache klíčů, pokud ji renderer podporuje."""
+    try:
+        renderer = get_pirate_key_renderer()
+        if renderer is not None and hasattr(renderer, "clear_persistent_key_cache"):
+            ok = bool(renderer.clear_persistent_key_cache())
+            try:
+                _sifrator_debug_log("Cache klíčů byla vyčištěna ručně." if ok else "Cache klíčů se nepodařilo vyčistit.")
+            except Exception:
+                pass
+            return ok
+    except Exception as error:
+        try:
+            _sifrator_debug_log(f"Ruční čištění cache klíčů selhalo: {type(error).__name__}: {error}")
+        except Exception:
+            pass
+    return False
+
+
+# Do okna LOGOVÁNÍ přidáme tlačítko pro ruční vyčištění cache klíčů.
+try:
+    _CACHE_DIALOG_ORIGINAL_INIT = LiveLogDialog.__init__
+
+    def _cache_dialog_init(self, owner_window):
+        _CACHE_DIALOG_ORIGINAL_INIT(self, owner_window)
+        try:
+            self.clear_cache_button = QPushButton("Vyčistit cache klíčů", self)
+            self.clear_cache_button.setToolTip("Smaže uložené PNG klíče. Při dalším použití se vytvoří znovu.")
+            self.clear_cache_button.clicked.connect(self.clear_key_cache)
+
+            # Tlačítko vložíme vedle ostatních tlačítek ve spodním řádku dialogu.
+            layout = self.layout()
+            if layout is not None:
+                row = layout.itemAt(layout.count() - 1)
+                if row is not None and row.layout() is not None:
+                    row.layout().insertWidget(max(0, row.layout().count() - 1), self.clear_cache_button)
+        except Exception:
+            pass
+
+    def _cache_dialog_clear_key_cache(self):
+        ok = _clear_persistent_key_cache_from_main()
+        if ok:
+            QMessageBox.information(self, "Cache klíčů", "Cache klíčů byla vyčištěna.")
+        else:
+            QMessageBox.warning(self, "Cache klíčů", "Cache klíčů se nepodařilo vyčistit.")
+        try:
+            self.refresh_log()
+        except Exception:
+            pass
+
+    LiveLogDialog.__init__ = _cache_dialog_init
+    LiveLogDialog.clear_key_cache = _cache_dialog_clear_key_cache
+except Exception:
+    pass
+
 def run_smoke_test() -> int:
     """Rychlý test pro GitHub Actions bez otevření hlavního okna aplikace."""
     try:
