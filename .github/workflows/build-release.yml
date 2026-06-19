@@ -11,7 +11,7 @@ on:
         description: "Režim spuštění"
         required: true
         type: choice
-        default: "test_only"
+        default: "release_after_approval"
         options:
           - test_only
           - release_after_approval
