@@ -55,6 +55,99 @@ class UpdateCancelled(UpdateError):
     pass
 
 
+
+def get_debug_log_path() -> str:
+    """Vrátí cestu k diagnostickému logu aktualizací.
+
+    Log je užitečný hlavně na macOS, kde může HTTPS stažení přes urllib
+    selhat kvůli certifikátům v PyInstaller buildu. Aplikace kvůli tomu
+    uživateli nezahlcuje okno chybami, ale uloží důvod do dočasné složky.
+    """
+    return os.path.join(tempfile.gettempdir(), "sifrator_update_debug.log")
+
+
+def _debug_log(message: str) -> None:
+    try:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(get_debug_log_path(), "a", encoding="utf-8") as file:
+            file.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def _curl_binary() -> str:
+    """Vrátí systémový curl, pokud je dostupný."""
+    if platform.system().lower() == "darwin" and os.path.exists("/usr/bin/curl"):
+        return "/usr/bin/curl"
+    return "curl"
+
+
+def _download_text_with_curl(url: str, timeout: int = 12) -> str:
+    curl = _curl_binary()
+    completed = subprocess.run(
+        [
+            curl,
+            "-L",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            str(max(3, int(timeout))),
+            "--max-time",
+            str(max(8, int(timeout) + 6)),
+            url,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        raise UpdateError(
+            "Stažení update.json přes curl selhalo.\n"
+            f"Kód: {completed.returncode}\n"
+            f"Chyba: {completed.stderr.strip()}"
+        )
+
+    return completed.stdout
+
+
+def _download_file_with_curl(url: str, output_path: str, timeout: int = 300) -> None:
+    curl = _curl_binary()
+    completed = subprocess.run(
+        [
+            curl,
+            "-L",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            str(max(60, int(timeout))),
+            "-o",
+            output_path,
+            url,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        raise UpdateError(
+            "Stažení aktualizačního ZIPu přes curl selhalo.\n"
+            f"Kód: {completed.returncode}\n"
+            f"Chyba: {completed.stderr.strip()}"
+        )
+
+
 def parse_version(version: str) -> tuple[int, ...]:
     """Normalizuje textovou verzi do číselné podoby vhodné pro porovnání."""
     value = (version or "").strip().lower().replace("v", "")
@@ -143,37 +236,84 @@ def _emit_progress(progress_callback: ProgressCallback | None, value: int, messa
 
 
 def download_text(url: str, timeout: int = 6) -> str:
+    """Stáhne text s fallbackem pro macOS buildy.
+
+    Na některých macOS PyInstaller buildech může urllib spadnout na SSL
+    certifikátech. Proto se nejdřív zkusí urllib a při chybě systémový curl.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": "Sifrator-Mraveniste-Updater"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8")
+
+    try:
+        _debug_log(f"Stahuji text přes urllib: {url}")
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode("utf-8")
+            _debug_log(f"urllib OK, délka textu: {len(text)}")
+            return text
+    except Exception as error:
+        _debug_log(f"urllib selhalo: {type(error).__name__}: {error}")
+
+    _debug_log(f"Zkouším curl fallback: {url}")
+    text = _download_text_with_curl(url, timeout=max(timeout, 12))
+    _debug_log(f"curl OK, délka textu: {len(text)}")
+    return text
 
 
 def download_file(url: str, output_path: str, timeout: int = 120, progress_callback: ProgressCallback | None = None) -> None:
+    """Stáhne soubor s fallbackem přes systémový curl.
+
+    urllib zůstává primární kvůli průběhu stahování. Pokud ale na macOS selže
+    HTTPS/certifikát, použije se curl, který je na macOS dostupný systémově.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": "Sifrator-Mraveniste-Updater"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        total_header = response.headers.get("Content-Length")
-        total_size = int(total_header) if total_header and total_header.isdigit() else 0
-        downloaded = 0
-        chunk_size = 1024 * 256
 
-        with open(output_path, "wb") as file:
-            while True:
-                chunk = response.read(chunk_size)
-                if not chunk:
-                    break
+    try:
+        _debug_log(f"Stahuji soubor přes urllib: {url}")
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            total_header = response.headers.get("Content-Length")
+            total_size = int(total_header) if total_header and total_header.isdigit() else 0
+            downloaded = 0
+            chunk_size = 1024 * 256
 
-                file.write(chunk)
-                downloaded += len(chunk)
+            with open(output_path, "wb") as file:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
 
-                if total_size > 0:
-                    percent = int(downloaded * 100 / total_size)
-                    value = 5 + int(percent * 0.65)
-                    mb_done = downloaded / (1024 * 1024)
-                    mb_total = total_size / (1024 * 1024)
-                    _emit_progress(progress_callback, value, f"Stahuji aktualizaci... {mb_done:.1f} / {mb_total:.1f} MB")
-                else:
-                    mb_done = downloaded / (1024 * 1024)
-                    _emit_progress(progress_callback, 25, f"Stahuji aktualizaci... {mb_done:.1f} MB")
+                    file.write(chunk)
+                    downloaded += len(chunk)
+
+                    if total_size > 0:
+                        percent = int(downloaded * 100 / total_size)
+                        value = 5 + int(percent * 0.65)
+                        mb_done = downloaded / (1024 * 1024)
+                        mb_total = total_size / (1024 * 1024)
+                        _emit_progress(progress_callback, value, f"Stahuji aktualizaci... {mb_done:.1f} / {mb_total:.1f} MB")
+                    else:
+                        mb_done = downloaded / (1024 * 1024)
+                        _emit_progress(progress_callback, 25, f"Stahuji aktualizaci... {mb_done:.1f} MB")
+
+        _debug_log(f"urllib soubor OK: {output_path}, velikost: {os.path.getsize(output_path)}")
+        return
+
+    except Exception as error:
+        _debug_log(f"urllib soubor selhal: {type(error).__name__}: {error}")
+
+    _emit_progress(progress_callback, 10, "Stahuji aktualizaci přes systémový curl...")
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except Exception:
+            pass
+
+    _download_file_with_curl(url, output_path, timeout=max(timeout, 300))
+    if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+        raise UpdateError("Stažení aktualizačního balíčku přes curl nevytvořilo platný soubor.")
+
+    _debug_log(f"curl soubor OK: {output_path}, velikost: {os.path.getsize(output_path)}")
+    _emit_progress(progress_callback, 68, "Aktualizace byla stažena.")
+
+
 
 
 def sha256_file(path: str, progress_callback: ProgressCallback | None = None) -> str:
@@ -244,22 +384,42 @@ def _select_platform_data(update_json: dict) -> dict | None:
 def check_for_update(current_version: str) -> dict | None:
     """Zkontroluje dostupnost nové verze a vrátí metadata aktualizace pro aktuální platformu."""
     try:
+        platform_key = get_platform_key()
+        _debug_log(
+            "Kontrola aktualizace: "
+            f"current_version={current_version}, platform_key={platform_key}, url={UPDATE_JSON_URL}"
+        )
+
         raw_json = download_text(UPDATE_JSON_URL)
         data = json.loads(raw_json)
 
         remote_version = str(data.get("version", "")).strip()
+        _debug_log(f"Vzdálená verze: {remote_version}")
+
         if not remote_version:
+            _debug_log("update.json neobsahuje platnou verzi.")
             return None
 
         if not is_newer_version(remote_version, current_version):
+            _debug_log("Novější verze není dostupná.")
             return None
 
         selected_data = _select_platform_data(data)
         if not selected_data:
+            platforms = data.get("platforms")
+            keys = ", ".join(sorted(platforms.keys())) if isinstance(platforms, dict) else "bez platforms"
+            _debug_log(f"Nenašel se balíček pro platformu {platform_key}. Dostupné klíče: {keys}")
             return None
 
+        _debug_log(
+            "Aktualizace dostupná: "
+            f"version={selected_data.get('version')}, "
+            f"platform={selected_data.get('platform_key')}, "
+            f"file={selected_data.get('file_name')}"
+        )
         return selected_data
-    except Exception:
+    except Exception as error:
+        _debug_log(f"check_for_update selhalo: {type(error).__name__}: {error}")
         return None
 
 
@@ -532,8 +692,14 @@ fi
 
 sleep 1
 
+# Po aktualizaci odstraníme quarantine atribut, který může vzniknout při stažení
+# a nastavíme spustitelnost hlavního binárního souboru uvnitř .app.
 case "$TARGET" in
     *.app)
+        /usr/bin/xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
+        if [ -d "$TARGET/Contents/MacOS" ]; then
+            chmod -R u+x "$TARGET/Contents/MacOS" 2>/dev/null || true
+        fi
         /usr/bin/open "$TARGET"
         ;;
     *)
