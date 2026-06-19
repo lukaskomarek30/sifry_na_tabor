@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Testovací verze bez písmene v"
+        description: "Testovací verze bez v, nebo auto-test = další patch podle posledního tagu + -test"
         required: true
-        default: "0.0.3-test"
+        default: "auto-test"
   push:
     branches:
       - main
@@ -22,8 +22,96 @@ env:
   LANG: "en_US.UTF-8"
 
 jobs:
+  resolve-version:
+    name: Určení testovací verze
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      latest_tag: ${{ steps.resolve.outputs.latest_tag }}
+      requested_version: ${{ steps.resolve.outputs.requested_version }}
+
+    steps:
+      - name: Stáhnout repozitář a tagy
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Zjistit testovací verzi
+        id: resolve
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || 'auto-test' }}
+        run: |
+          git fetch --tags --force
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          requested = (os.environ.get('REQUESTED_VERSION') or 'auto-test').strip()
+
+          def parse_version(value: str):
+              nums = [int(x) for x in re.findall(r'\d+', value or '')[:3]]
+              while len(nums) < 3:
+                  nums.append(0)
+              return tuple(nums)
+
+          def get_latest_tag():
+              try:
+                  raw = subprocess.check_output(
+                      ['git', 'tag', '--list', 'v*'],
+                      text=True,
+                      encoding='utf-8',
+                      errors='replace',
+                  )
+              except Exception:
+                  raw = ''
+
+              tags = [line.strip() for line in raw.splitlines() if line.strip()]
+              semver_tags = []
+              for tag in tags:
+                  if re.match(r'^v?\d+\.\d+\.\d+(?:[-_].*)?$', tag):
+                      semver_tags.append(tag)
+
+              if not semver_tags:
+                  return 'v0.0.0'
+
+              return sorted(semver_tags, key=parse_version)[-1]
+
+          latest_tag = get_latest_tag()
+
+          if requested.lower() in ('auto', 'auto-test', 'next', 'patch', ''):
+              major, minor, patch = parse_version(latest_tag)
+              patch += 1
+              version = f'{major}.{minor}.{patch}-test'
+              mode_text = 'automaticky další patch testovací verze'
+          else:
+              version = requested.lstrip('vV').strip()
+              mode_text = 'ručně zadaná testovací verze'
+
+          if not re.match(r'^\d+\.\d+\.\d+(?:[-_][A-Za-z0-9.]+)?$', version):
+              raise SystemExit(f'Neplatný formát verze: {version}. Použij například 0.0.4-test nebo auto-test.')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as file:
+              file.write(f'version={version}\n')
+              file.write(f'latest_tag={latest_tag}\n')
+              file.write(f'requested_version={requested}\n')
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as file:
+              file.write('## Určení testovací verze\n\n')
+              file.write(f'- Zadaná hodnota: `{requested}`\n')
+              file.write(f'- Nejnovější nalezený tag: `{latest_tag}`\n')
+              file.write(f'- Režim: `{mode_text}`\n')
+              file.write(f'- Výsledná testovací verze: `{version}`\n\n')
+
+          print(f'Zadaná hodnota: {requested}')
+          print(f'Nejnovější tag: {latest_tag}')
+          print(f'Výsledná testovací verze: {version}')
+          PY
+
   source-check:
     name: Kontrola zdrojových souborů
+    needs: resolve-version
     runs-on: ubuntu-latest
 
     steps:
@@ -69,7 +157,7 @@ jobs:
 
   build-test:
     name: Test ${{ matrix.platform }}
-    needs: source-check
+    needs: [resolve-version, source-check]
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -102,11 +190,10 @@ jobs:
       - name: Nastavit verzi pro test
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
-          else
-            echo "VERSION=0.0.3-test" >> "$GITHUB_ENV"
-          fi
+          echo "VERSION=${{ needs.resolve-version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "LATEST_TAG=${{ needs.resolve-version.outputs.latest_tag }}" >> "$GITHUB_ENV"
+          echo "Používám testovací verzi: ${{ needs.resolve-version.outputs.version }}"
+          echo "Nejnovější tag byl: ${{ needs.resolve-version.outputs.latest_tag }}"
 
       - name: Zobrazit systém
         shell: bash
