@@ -66,6 +66,11 @@ def get_debug_log_path() -> str:
     return os.path.join(tempfile.gettempdir(), "sifrator_update_debug.log")
 
 
+def get_update_install_log_path() -> str:
+    """Vrátí cestu k instalačnímu logu macOS aktualizace."""
+    return os.path.join(tempfile.gettempdir(), "sifrator_update_install.log")
+
+
 def _debug_log(message: str) -> None:
     try:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -220,6 +225,41 @@ def get_macos_app_bundle_path() -> str:
     return ""
 
 
+def is_macos_app_translocated() -> bool:
+    """Zjistí, jestli macOS spustil aplikaci z dočasné AppTranslocation cesty.
+
+    Když je aplikace translocovaná, updater by přepsal jen dočasnou kopii,
+    takže po dalším spuštění by uživatel znovu viděl starou verzi.
+    """
+    if platform.system().lower() != "darwin":
+        return False
+
+    run_path = os.path.abspath(get_current_run_path())
+    app_path = os.path.abspath(get_macos_app_bundle_path() or "")
+    return "/AppTranslocation/" in run_path or "/AppTranslocation/" in app_path
+
+
+def ensure_macos_update_target_is_valid() -> None:
+    """Zastaví aktualizaci, pokud macOS běží z AppTranslocation."""
+    if not is_macos_app_translocated():
+        return
+
+    run_path = os.path.abspath(get_current_run_path())
+    raise UpdateError(
+        "macOS spustil aplikaci z dočasné AppTranslocation cesty.\n\n"
+        "V takovém režimu se aktualizace sice může stáhnout, ale přepíše jen "
+        "dočasnou kopii aplikace. Po dalším spuštění by se proto znovu otevřela "
+        "stará verze.\n\n"
+        "Řešení:\n"
+        "1) Ukonči aplikaci přes Cmd+Q.\n"
+        "2) Přesuň Sifrator_Mraveniste.app do /Applications.\n"
+        "3) V Terminálu spusť:\n"
+        "   xattr -dr com.apple.quarantine /Applications/Sifrator_Mraveniste.app\n"
+        "4) Spusť aplikaci z /Applications a aktualizaci zopakuj.\n\n"
+        f"Aktuální dočasná cesta:\n{run_path}"
+    )
+
+
 def get_update_target_path() -> str:
     """Vrátí cílovou cestu, do které se má nainstalovat nová verze aplikace."""
     if platform.system().lower() == "darwin":
@@ -268,6 +308,7 @@ def download_file(url: str, output_path: str, timeout: int = 120, progress_callb
 
     try:
         _debug_log(f"Stahuji soubor přes urllib: {url}")
+        _emit_progress(progress_callback, 4, "Připojuji se k GitHubu...")
         with urllib.request.urlopen(request, timeout=timeout) as response:
             total_header = response.headers.get("Content-Length")
             total_size = int(total_header) if total_header and total_header.isdigit() else 0
@@ -621,15 +662,28 @@ Write-Progress -Activity "Aktualizace Šifrátoru" -Completed
 
 
 def _install_update_macos(zip_path: str, target_path: str, progress_callback: ProgressCallback | None = None) -> None:
+    """Nainstaluje aktualizaci na macOS.
+
+    Oprava:
+    - zapisuje samostatný install log,
+    - nahrazuje celou .app přes ditto místo tichého rsync,
+    - pro /Applications používá administrátorský dialog přes osascript,
+    - po kopii nastaví oprávnění a odstraní quarantine atribut,
+    - znovu otevře přímo .app bundle.
+    """
+    ensure_macos_update_target_is_valid()
+
     temp_root = tempfile.gettempdir()
     temp_extract_dir = os.path.join(temp_root, "sifrator_update_extract")
     sh_path = os.path.join(temp_root, "sifrator_update.sh")
+    install_log = get_update_install_log_path()
 
     if os.path.exists(temp_extract_dir):
         shutil.rmtree(temp_extract_dir, ignore_errors=True)
     os.makedirs(temp_extract_dir, exist_ok=True)
 
     _emit_progress(progress_callback, 80, "Rozbaluji aktualizaci...")
+    _debug_log(f"macOS instalace: ZIP={zip_path}, TARGET={target_path}")
     _extract_zip_with_progress(zip_path, temp_extract_dir, progress_callback=progress_callback)
 
     if target_path.endswith(".app"):
@@ -637,76 +691,113 @@ def _install_update_macos(zip_path: str, target_path: str, progress_callback: Pr
     else:
         payload_path = _find_payload_dir(temp_extract_dir)
 
+    if not os.path.exists(payload_path):
+        raise UpdateError(f"V rozbaleném ZIPu nebyla nalezena aplikace: {payload_path}")
+
+    if target_path.endswith(".app") and not payload_path.endswith(".app"):
+        raise UpdateError(f"V ZIPu nebyl nalezen .app balíček. Nalezeno: {payload_path}")
+
     current_pid = os.getpid()
     backup_path = os.path.join(temp_root, f"sifrator_backup_{int(time.time())}")
 
     source_q = _sh_quote(payload_path)
     target_q = _sh_quote(target_path)
     backup_q = _sh_quote(backup_path)
+    log_q = _sh_quote(install_log)
 
     _emit_progress(progress_callback, 96, "Připravuji restart aplikace...")
+    _debug_log(f"macOS payload: {payload_path}")
+    _debug_log(f"macOS install log: {install_log}")
 
-    shell_script = f"""#!/bin/sh
-set -eu
+    shell_script = f'''#!/bin/sh
+set -u
 
+LOG={log_q}
 PID_TO_WAIT={current_pid}
 SOURCE={source_q}
 TARGET={target_q}
 BACKUP={backup_q}
 
-echo "Instaluji aktualizaci Šifrátoru Mraveniště..."
-echo "Nezavírej toto okno."
+exec >> "$LOG" 2>&1
 
+echo "============================================================"
+date
+echo "Instaluji aktualizaci Sifrator Mraveniste"
+echo "SOURCE=$SOURCE"
+echo "TARGET=$TARGET"
+echo "BACKUP=$BACKUP"
+echo "PID_TO_WAIT=$PID_TO_WAIT"
+
+echo "Cekam na ukonceni puvodni aplikace..."
+COUNT=0
 while kill -0 "$PID_TO_WAIT" 2>/dev/null; do
     sleep 1
+    COUNT=$((COUNT + 1))
+    if [ "$COUNT" -gt 45 ]; then
+        echo "Aplikace se neukoncila do 45 s, pokracuji dal."
+        break
+    fi
 done
 
 if [ ! -e "$SOURCE" ]; then
-    echo "Zdroj aktualizace neexistuje: $SOURCE"
-    exit 1
+    echo "CHYBA: Zdroj aktualizace neexistuje: $SOURCE"
+    exit 10
 fi
 
 if [ ! -e "$TARGET" ]; then
-    echo "Cílová aplikace neexistuje: $TARGET"
-    exit 1
+    echo "CHYBA: Cilova aplikace neexistuje: $TARGET"
+    exit 11
 fi
 
+echo "Vytvarim zalohu..."
+rm -rf "$BACKUP"
 mkdir -p "$BACKUP"
+/usr/bin/ditto "$TARGET" "$BACKUP/$(basename "$TARGET")" || echo "VAROVANI: zaloha se nepovedla"
 
-if [ -d "$TARGET" ]; then
-    /usr/bin/ditto "$TARGET" "$BACKUP/$(basename "$TARGET")" || true
-else
-    cp -p "$TARGET" "$BACKUP/" || true
+echo "Mazu starou aplikaci..."
+rm -rf "$TARGET"
+
+if [ -e "$TARGET" ]; then
+    echo "CHYBA: Starou aplikaci se nepodarilo smazat: $TARGET"
+    exit 12
 fi
 
-if [ -d "$SOURCE" ] && [ -d "$TARGET" ]; then
-    if command -v rsync >/dev/null 2>&1; then
-        rsync -a --delete "$SOURCE"/ "$TARGET"/
-    else
-        rm -rf "$TARGET"
-        /usr/bin/ditto "$SOURCE" "$TARGET"
+echo "Kopiruji novou aplikaci pres ditto..."
+/usr/bin/ditto "$SOURCE" "$TARGET"
+DITTO_CODE=$?
+echo "ditto exit code: $DITTO_CODE"
+if [ "$DITTO_CODE" -ne 0 ]; then
+    echo "CHYBA: Kopirovani nove aplikace selhalo. Obnovuji zalohu."
+    rm -rf "$TARGET"
+    if [ -e "$BACKUP/$(basename "$TARGET")" ]; then
+        /usr/bin/ditto "$BACKUP/$(basename "$TARGET")" "$TARGET" || true
     fi
-else
-    cp -p "$SOURCE" "$TARGET"
+    exit 13
 fi
 
-sleep 1
+echo "Nastavuji opravneni..."
+chmod -R u+rwX "$TARGET" || true
+if [ -d "$TARGET/Contents/MacOS" ]; then
+    chmod -R u+x "$TARGET/Contents/MacOS" || true
+fi
 
-# Po aktualizaci odstraníme quarantine atribut, který může vzniknout při stažení
-# a nastavíme spustitelnost hlavního binárního souboru uvnitř .app.
-case "$TARGET" in
-    *.app)
-        /usr/bin/xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
-        if [ -d "$TARGET/Contents/MacOS" ]; then
-            chmod -R u+x "$TARGET/Contents/MacOS" 2>/dev/null || true
-        fi
-        /usr/bin/open "$TARGET"
-        ;;
-    *)
-        /usr/bin/open "$(dirname "$TARGET")"
-        ;;
-esac
-"""
+echo "Odstranuji quarantine atribut..."
+/usr/bin/xattr -dr com.apple.quarantine "$TARGET" || true
+
+echo "Kontrola vysledku:"
+if [ -d "$TARGET" ]; then
+    find "$TARGET/Contents/MacOS" -maxdepth 1 -type f -print || true
+fi
+
+echo "Spoustim aktualizovanou aplikaci..."
+/usr/bin/open "$TARGET"
+OPEN_CODE=$?
+echo "open exit code: $OPEN_CODE"
+
+date
+echo "Instalace aktualizace dokoncena."
+exit "$OPEN_CODE"
+'''
 
     with open(sh_path, "w", encoding="utf-8") as file:
         file.write(shell_script)
@@ -719,7 +810,16 @@ esac
     _emit_progress(progress_callback, 100, "Aktualizace je připravená. Aplikace se restartuje...")
     time.sleep(0.4)
 
-    subprocess.Popen(["/bin/sh", sh_path], shell=False)
+    use_admin = os.path.abspath(target_path).startswith("/Applications/")
+    _debug_log(f"Spouštím macOS instalační skript. use_admin={use_admin}, script={sh_path}")
+
+    if use_admin:
+        quoted_script_for_applescript = sh_path.replace('\\', '\\\\').replace('\"', '\\"')
+        apple_script = f'do shell script "\"/bin/sh\" \"{quoted_script_for_applescript}\"" with administrator privileges'
+        subprocess.Popen(["/usr/bin/osascript", "-e", apple_script], shell=False)
+    else:
+        subprocess.Popen(["/bin/sh", sh_path], shell=False)
+
     sys.exit(0)
 
 
@@ -794,6 +894,7 @@ def download_and_install_update(update_data: dict) -> None:
     progress = _QtProgress()
 
     try:
+        ensure_macos_update_target_is_valid()
         target_path = get_update_target_path()
         current_run_path = get_current_run_path()
         run_file_name = os.path.basename(current_run_path)
