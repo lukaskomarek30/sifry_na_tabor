@@ -3,6 +3,8 @@ APP_NAME = "Sifrator_Mraveniste"
 
 import os
 import sys
+import tempfile
+import time
 import ctypes
 import unicodedata
 import importlib.util
@@ -22,6 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
     QGridLayout,
     QMessageBox,
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
 )
 
 from PySide6.QtWidgets import QComboBox, QSpinBox, QAbstractSpinBox
@@ -8820,6 +8825,403 @@ except Exception:
     pass
 
 
+
+
+# ============================================================
+# PATCHE: spodní klikací LOGOVÁNÍ + AKTUALIZACE + live log okno
+# ============================================================
+
+_FOOTER_ORIGINAL_CREATE_WIDGETS = SifratorSkinWidget.create_widgets
+_FOOTER_ORIGINAL_UPDATE_STATUS = SifratorSkinWidget.update_status
+_FOOTER_ORIGINAL_UPDATE_LAYOUT_POSITIONS = SifratorSkinWidget.update_layout_positions
+
+
+def _sifrator_debug_log(message: str) -> None:
+    """Zapíše diagnostickou zprávu do aktualizačního logu, pokud je dostupný."""
+    try:
+        if hasattr(update_manager, "_debug_log"):
+            update_manager._debug_log(str(message))
+            return
+    except Exception:
+        pass
+
+    try:
+        path = os.path.join(tempfile.gettempdir(), "sifrator_update_debug.log")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as file:
+            file.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def _sifrator_debug_log_path() -> str:
+    try:
+        if hasattr(update_manager, "get_debug_log_path"):
+            return update_manager.get_debug_log_path()
+    except Exception:
+        pass
+    try:
+        return os.path.join(tempfile.gettempdir(), "sifrator_update_debug.log")
+    except Exception:
+        return "sifrator_update_debug.log"
+
+
+class LiveLogDialog(QDialog):
+    """Jednoduché okno s live výpisem diagnostických logů aplikace/updateru."""
+
+    def __init__(self, owner_window):
+        super().__init__(owner_window)
+        self.owner_window = owner_window
+        self.setWindowTitle("Živé logování – Šifrátor Mraveniště")
+        self.resize(880, 560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        self.info_label = QLabel(self)
+        self.info_label.setText(
+            "Live logy aktualizací a aplikace. "
+            "Po zavření tohoto okna se logování automaticky vypne."
+        )
+        self.info_label.setStyleSheet("color: #ead8b3;")
+        layout.addWidget(self.info_label)
+
+        self.log_edit = QTextEdit(self)
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setLineWrapMode(QTextEdit.NoWrap)
+        self.log_edit.setStyleSheet("""
+            QTextEdit {
+                color: #f0e2c0;
+                background: #071018;
+                border: 1px solid #8a6938;
+                border-radius: 6px;
+                padding: 8px;
+                font-family: Consolas, Menlo, Monaco, monospace;
+                font-size: 12px;
+            }
+        """)
+        layout.addWidget(self.log_edit, 1)
+
+        button_row = QHBoxLayout()
+        self.path_label = QLabel(self)
+        self.path_label.setText(_sifrator_debug_log_path())
+        self.path_label.setStyleSheet("color: #a8a295;")
+        button_row.addWidget(self.path_label, 1)
+
+        self.clear_button = QPushButton("Vyčistit log", self)
+        self.refresh_button = QPushButton("Obnovit", self)
+        self.close_button = QPushButton("Zavřít", self)
+        button_row.addWidget(self.clear_button)
+        button_row.addWidget(self.refresh_button)
+        button_row.addWidget(self.close_button)
+        layout.addLayout(button_row)
+
+        self.clear_button.clicked.connect(self.clear_log)
+        self.refresh_button.clicked.connect(self.refresh_log)
+        self.close_button.clicked.connect(self.close)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_log)
+        self.timer.start(700)
+        self.refresh_log()
+
+    def clear_log(self):
+        path = _sifrator_debug_log_path()
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("")
+        except Exception as error:
+            self.log_edit.setPlainText(f"Log se nepodařilo vyčistit:\n{error}")
+            return
+        _sifrator_debug_log("Log byl vyčištěn z okna LOGOVÁNÍ.")
+        self.refresh_log()
+
+    def refresh_log(self):
+        path = _sifrator_debug_log_path()
+        self.path_label.setText(path)
+        try:
+            if not os.path.exists(path):
+                self.log_edit.setPlainText("Log zatím neexistuje. Spusť kontrolu aktualizací nebo proveď akci v aplikaci.")
+                return
+
+            with open(path, "r", encoding="utf-8", errors="replace") as file:
+                content = file.read()
+
+            if not content.strip():
+                content = "Log je zatím prázdný."
+
+            # Nezobrazujeme nekonečně dlouhý soubor, poslední část stačí pro živou diagnostiku.
+            max_chars = 80000
+            if len(content) > max_chars:
+                content = "... zkráceno na posledních 80000 znaků ...\n" + content[-max_chars:]
+
+            old_bar = self.log_edit.verticalScrollBar().value()
+            was_at_bottom = old_bar >= self.log_edit.verticalScrollBar().maximum() - 8
+            self.log_edit.setPlainText(content)
+            if was_at_bottom:
+                self.log_edit.verticalScrollBar().setValue(self.log_edit.verticalScrollBar().maximum())
+        except Exception as error:
+            self.log_edit.setPlainText(f"Log se nepodařilo načíst:\n{error}")
+
+    def closeEvent(self, event):
+        try:
+            self.timer.stop()
+        except Exception:
+            pass
+        if self.owner_window is not None and hasattr(self.owner_window, "set_live_logging_enabled"):
+            self.owner_window.set_live_logging_enabled(False)
+        super().closeEvent(event)
+
+
+def _footer_prepare_links(self):
+    """Připraví samostatné klikací texty ve spodním řádku."""
+    if hasattr(self, "log_status_link") and hasattr(self, "update_status_link"):
+        return
+
+    base_style = "background: transparent; color: #d9c697;"
+    link_style = "background: transparent; color: #f3d79a;"
+
+    self.log_status_link = QLabel(self)
+    self.log_status_link.setStyleSheet(link_style)
+    self.log_status_link.setCursor(Qt.PointingHandCursor)
+    self.log_status_link.setToolTip("Kliknutím zapneš logování a otevřeš live logy.")
+    self.log_status_link.mousePressEvent = lambda event: _footer_log_clicked(self, event)
+
+    self.src_status_label = QLabel(self)
+    self.src_status_label.setStyleSheet(base_style)
+
+    self.update_status_link = QLabel(self)
+    self.update_status_link.setStyleSheet(link_style)
+    self.update_status_link.setCursor(Qt.PointingHandCursor)
+    self.update_status_link.setToolTip("Ručně zkontrolovat aktualizace.")
+    self.update_status_link.mousePressEvent = lambda event: _footer_update_clicked(self, event)
+
+    for label in (self.log_status_link, self.src_status_label, self.update_status_link):
+        label.show()
+        label.raise_()
+
+
+def _footer_window(self):
+    try:
+        window = self.window()
+        if isinstance(window, SifratorWindow):
+            return window
+    except Exception:
+        pass
+    return None
+
+
+def _footer_log_clicked(self, event=None):
+    window = _footer_window(self)
+    if window is not None and hasattr(window, "show_live_log_window"):
+        window.show_live_log_window()
+
+
+def _footer_update_clicked(self, event=None):
+    window = _footer_window(self)
+    if window is not None and hasattr(window, "manual_check_updates"):
+        window.manual_check_updates()
+
+
+def _footer_create_widgets(self):
+    _FOOTER_ORIGINAL_CREATE_WIDGETS(self)
+    _footer_prepare_links(self)
+    self.update_status()
+
+
+def _footer_layout_status(self):
+    _footer_prepare_links(self)
+
+    y_rect = self.sr(52, 881, 950, 22)
+    x = y_rect.x()
+    y = y_rect.y()
+    h = y_rect.height()
+    max_right = max(x + self.sr(0, 0, 1560, 0).width(), self.width() - self.fs(20))
+
+    font = QFont("Georgia", self.fs(10))
+    for label in (self.status, self.log_status_link, self.src_status_label, self.update_status_link):
+        label.setFont(font)
+        label.setFixedHeight(h)
+
+    fm = self.status.fontMetrics()
+    available_total = max(300, max_right - x)
+    log_text = self.log_status_link.text()
+    src_text = self.src_status_label.text()
+    update_text = self.update_status_link.text()
+    fixed_w = fm.horizontalAdvance(log_text) + fm.horizontalAdvance(src_text) + fm.horizontalAdvance(update_text) + self.fs(58)
+    max_selected_w = max(self.fs(130), available_total - fixed_w)
+
+    selected_text = self.status.property("full_status_text") or self.status.text()
+    selected_text = fm.elidedText(str(selected_text), Qt.ElideRight, max_selected_w)
+    self.status.setText(selected_text)
+
+    for label in (self.status, self.log_status_link, self.src_status_label, self.update_status_link):
+        label.adjustSize()
+
+    gap = self.fs(10)
+    for label in (self.status, self.log_status_link, self.src_status_label, self.update_status_link):
+        width = min(label.width() + self.fs(4), max(40, max_right - x))
+        label.setGeometry(x, y, width, h)
+        label.show()
+        label.raise_()
+        x += width + gap
+
+
+def _footer_update_status(self):
+    _footer_prepare_links(self)
+    selected_text = self.selected_cipher if self.selected_cipher else "Žádná"
+
+    window = _footer_window(self)
+    logging_enabled = bool(window and hasattr(window, "is_live_logging_enabled") and window.is_live_logging_enabled())
+    logging_text = "Zapnuto" if logging_enabled else "Vypnuto"
+
+    self.status.setProperty("full_status_text", f"VYBRANÁ ŠIFRA:  {selected_text}   |")
+    self.status.setText(f"VYBRANÁ ŠIFRA:  {selected_text}   |")
+    self.log_status_link.setText(f"LOGOVÁNÍ:  {logging_text}   |")
+    self.src_status_label.setText("SRC SLOŽKA:  Nalezena   |")
+    self.update_status_link.setText("AKTUALIZACE")
+    self.log_status_link.setToolTip(
+        "Kliknutím otevřeš live logy. Zavřením okna se logování vypne."
+        if logging_enabled else
+        "Kliknutím zapneš logování a otevřeš live logy."
+    )
+    _footer_layout_status(self)
+
+
+def _footer_update_layout_positions(self):
+    _FOOTER_ORIGINAL_UPDATE_LAYOUT_POSITIONS(self)
+    _footer_layout_status(self)
+
+
+SifratorSkinWidget.create_widgets = _footer_create_widgets
+SifratorSkinWidget.update_status = _footer_update_status
+SifratorSkinWidget.update_layout_positions = _footer_update_layout_positions
+
+
+_AUTOMATIC_ORIGINAL_CHECK_UPDATES = SifratorWindow.check_updates_after_start
+
+
+def _window_is_live_logging_enabled(self) -> bool:
+    return bool(getattr(self, "_live_logging_enabled", False))
+
+
+def _window_set_live_logging_enabled(self, enabled: bool):
+    self._live_logging_enabled = bool(enabled)
+    try:
+        if hasattr(self, "central"):
+            self.central.update_status()
+    except Exception:
+        pass
+
+
+def _window_write_live_log(self, message: str):
+    _sifrator_debug_log(message)
+    try:
+        dialog = getattr(self, "_live_log_dialog", None)
+        if dialog is not None:
+            dialog.refresh_log()
+    except Exception:
+        pass
+
+
+def _window_show_live_log_window(self):
+    dialog = getattr(self, "_live_log_dialog", None)
+    if dialog is not None and dialog.isVisible():
+        dialog.raise_()
+        dialog.activateWindow()
+        return
+
+    self.set_live_logging_enabled(True)
+    self._live_log_dialog = LiveLogDialog(self)
+    self.write_live_log("Logování bylo zapnuto přes spodní stavový řádek.")
+    self._live_log_dialog.show()
+    self._live_log_dialog.raise_()
+    self._live_log_dialog.activateWindow()
+
+
+def _window_show_update_offer(self, update_data: dict, manual: bool = False):
+    remote_version = update_data.get("version", "")
+    notes = update_data.get("notes", "")
+    platform_key = update_data.get("platform_key", "")
+    file_name = update_data.get("file_name", "")
+
+    message = (
+        f"Je dostupná nová verze {remote_version}.\n\n"
+        f"Aktuální verze: {APP_VERSION}\n"
+        f"Platforma: {platform_key}\n"
+        f"Balíček: {file_name}\n\n"
+        f"{notes}\n\n"
+        "Chceš aplikaci aktualizovat?"
+    )
+
+    answer = QMessageBox.question(
+        self,
+        "Dostupná aktualizace",
+        message,
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.Yes,
+    )
+
+    if answer == QMessageBox.Yes:
+        try:
+            self.write_live_log(f"Uživatel potvrdil aktualizaci na verzi {remote_version}.")
+            update_manager.download_and_install_update(update_data)
+        except Exception as error:
+            self.write_live_log(f"Chyba aktualizace: {type(error).__name__}: {error}")
+            QMessageBox.critical(
+                self,
+                "Chyba aktualizace",
+                f"Aktualizaci se nepodařilo dokončit:\n\n{error}",
+            )
+    else:
+        self.write_live_log("Uživatel aktualizaci odmítl.")
+
+
+def _window_check_updates_common(self, manual: bool = False):
+    platform_key = update_manager.get_platform_key() if hasattr(update_manager, "get_platform_key") else "unknown"
+    self.write_live_log(
+        ("Ruční" if manual else "Automatická") +
+        f" kontrola aktualizací: current={APP_VERSION}, platform={platform_key}"
+    )
+
+    update_data = update_manager.check_for_update(APP_VERSION)
+    if update_data:
+        self.write_live_log(
+            f"Aktualizace dostupná: version={update_data.get('version')}, "
+            f"platform={update_data.get('platform_key')}, file={update_data.get('file_name')}"
+        )
+        _window_show_update_offer(self, update_data, manual=manual)
+        return
+
+    self.write_live_log("Aktualizace není dostupná nebo se nepodařilo načíst update.json.")
+
+    if manual:
+        log_path = _sifrator_debug_log_path()
+        QMessageBox.information(
+            self,
+            "Aktualizace",
+            "Novější verze nebyla nalezena.\n\n"
+            f"Aktuální verze: {APP_VERSION}\n"
+            f"Platforma: {platform_key}\n\n"
+            f"Diagnostický log:\n{log_path}",
+        )
+
+
+def _window_check_updates_after_start(self):
+    _window_check_updates_common(self, manual=False)
+
+
+def _window_manual_check_updates(self):
+    _window_check_updates_common(self, manual=True)
+
+
+SifratorWindow.is_live_logging_enabled = _window_is_live_logging_enabled
+SifratorWindow.set_live_logging_enabled = _window_set_live_logging_enabled
+SifratorWindow.write_live_log = _window_write_live_log
+SifratorWindow.show_live_log_window = _window_show_live_log_window
+SifratorWindow.manual_check_updates = _window_manual_check_updates
+SifratorWindow.check_updates_after_start = _window_check_updates_after_start
 
 def run_smoke_test() -> int:
     """Rychlý test pro GitHub Actions bez otevření hlavního okna aplikace."""
