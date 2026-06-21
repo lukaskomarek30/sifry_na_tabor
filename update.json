@@ -1,21 +1,21 @@
 {
-  "version": "0.0.3",
-  "notes": "Nová verze 0.0.3.",
+  "version": "0.0.4",
+  "notes": "Nová verze 0.0.4.",
   "platforms": {
     "windows-x64": {
-      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.3/Sifrator_Mraveniste_windows-x64_v0.0.3.zip",
-      "sha256": "faae70324a2d46af5aee88db84f4dff0bd792f956f1a84d3e7b3b4250ed68290",
-      "file_name": "Sifrator_Mraveniste_windows-x64_v0.0.3.zip"
+      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.4/Sifrator_Mraveniste_windows-x64_v0.0.4.zip",
+      "sha256": "ca0953cf02357bd0feda5ff13b04f86e66698716fc961b261b958e1eb6e80520",
+      "file_name": "Sifrator_Mraveniste_windows-x64_v0.0.4.zip"
     },
     "macos-arm64": {
-      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.3/Sifrator_Mraveniste_macos-arm64_v0.0.3.zip",
-      "sha256": "3d9642477cbc16f3d6d27618500b2abcb498bdc8917c863b75f632168ebfb3fe",
-      "file_name": "Sifrator_Mraveniste_macos-arm64_v0.0.3.zip"
+      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.4/Sifrator_Mraveniste_macos-arm64_v0.0.4.zip",
+      "sha256": "b0f433b965591df37dccb0a9861bd23bf46e6295484dceeb9fd16e8fe5b7d184",
+      "file_name": "Sifrator_Mraveniste_macos-arm64_v0.0.4.zip"
     },
     "macos-x64": {
-      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.3/Sifrator_Mraveniste_macos-x64_v0.0.3.zip",
-      "sha256": "9cd6a5272cd60fd64f709a79760c993fbe20553c338cd8e9bbbeb4d49abaaeca",
-      "file_name": "Sifrator_Mraveniste_macos-x64_v0.0.3.zip"
+      "package_url": "https://github.com/lukaskomarek30/sifry_na_tabor/releases/download/v0.0.4/Sifrator_Mraveniste_macos-x64_v0.0.4.zip",
+      "sha256": "efe96730dba6dd599934a501c2c52e3f27abbf0ee877ee692f080c8afa25a848",
+      "file_name": "Sifrator_Mraveniste_macos-x64_v0.0.4.zip"
     }
   }
 }
