@@ -45,7 +45,7 @@ jobs:
         id: resolve
         shell: bash
         env:
-          REQUESTED_VERSION: ${{ needs.resolve-version.outputs.version }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           git fetch --tags --force
           python - <<'PY'
@@ -650,12 +650,31 @@ jobs:
               zips.append((label, path.name, target, file_size(path), sha))
 
           lines = []
+
+          def blank():
+              lines.append('')
+
+          def open_details(title: str, opened: bool = False):
+              if opened:
+                  lines.append('<details open>')
+              else:
+                  lines.append('<details>')
+              lines.append(f'<summary><strong>{title}</strong></summary>')
+              lines.append('')
+
+          def close_details():
+              lines.append('')
+              lines.append('</details>')
+              lines.append('')
+
           lines.append(f'# Šifrátor Mraveniště {tag}')
           lines.append('')
           lines.append(f'Nová verze aplikace **Šifrátor Mraveniště** `{tag}`.')
           lines.append('')
-          lines.append('## Stav vydání')
+          lines.append('Kliknutím na nadpis níže si rozbalíš konkrétní část poznámek k vydání.')
           lines.append('')
+
+          open_details('Stav vydání')
           lines.append('| Kontrola | Stav |')
           lines.append('|---|---|')
           lines.append('| Windows x64 build | ✅ OK |')
@@ -666,16 +685,18 @@ jobs:
           lines.append('| ZIP struktura | ✅ OK |')
           lines.append('| SHA256 kontrola | ✅ OK |')
           lines.append('| update.json | ✅ OK |')
-          lines.append('')
-          lines.append('## Stažení')
-          lines.append('')
+          close_details()
+
+          open_details('Stažení')
           lines.append('| Systém | Soubor | Pro koho | Velikost |')
           lines.append('|---|---|---|---:|')
           for label, filename, target, size, sha in zips:
               lines.append(f'| {label} | `{filename}` | {target} | {size} |')
           lines.append('')
-          lines.append('## Co je nového')
-          lines.append('')
+          lines.append('Soubory ke stažení najdeš také dole v části **Assets** u tohoto GitHub Release.')
+          close_details()
+
+          open_details('Co je nového')
           any_commit = False
           for title, items in categories.items():
               if not items:
@@ -690,16 +711,18 @@ jobs:
               lines.append('')
           if not any_commit:
               lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam commitů.')
-              lines.append('')
-          lines.append('## SHA256')
+          close_details()
+
+          open_details('SHA256')
+          lines.append('Kontrolní součty stažených ZIP balíčků:')
           lines.append('')
           lines.append('```text')
           for label, filename, target, size, sha in zips:
               lines.append(f'{sha}  {filename}')
           lines.append('```')
-          lines.append('')
-          lines.append('## První spuštění')
-          lines.append('')
+          close_details()
+
+          open_details('První spuštění')
           lines.append('- **Windows:** stáhni `windows-x64`, rozbal ZIP a spusť aplikaci.')
           lines.append('- **Mac Apple Silicon:** stáhni `macos-arm64`.')
           lines.append('- **Mac Intel:** stáhni `macos-x64`.')
@@ -720,19 +743,24 @@ jobs:
           lines.append('3. Potvrď spuštění tlačítkem **Open**.')
           lines.append('')
           lines.append(f'![macOS Open]({raw_base}/macos_02_open_confirmation.png)')
-          lines.append('')
-          lines.append('## Automatické aktualizace')
-          lines.append('')
+          close_details()
+
+          open_details('Automatické aktualizace')
           lines.append('Součástí vydání je `update.json`, který používá automatický updater aplikace.')
           lines.append('')
+          lines.append('Aplikace si podle systému vybere správný balíček:')
+          lines.append('')
+          lines.append('- `windows-x64` pro Windows')
+          lines.append('- `macos-arm64` pro Apple Silicon')
+          lines.append('- `macos-x64` pro Intel Mac')
+          close_details()
+
+          open_details('Porovnání změn')
           if previous_tag:
-              lines.append(f'## Porovnání změn')
-              lines.append('')
               lines.append(f'**Full changelog:** {full_changelog}')
           else:
-              lines.append('## Porovnání změn')
-              lines.append('')
               lines.append('Toto je první tag, který workflow našlo pro porovnání.')
+          close_details()
 
           notes = '\n'.join(lines).strip() + '\n'
           Path('RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
