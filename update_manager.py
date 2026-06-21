@@ -662,20 +662,22 @@ Write-Progress -Activity "Aktualizace Šifrátoru" -Completed
 
 
 def _install_update_macos(zip_path: str, target_path: str, progress_callback: ProgressCallback | None = None) -> None:
-    """Nainstaluje aktualizaci na macOS.
+    """Nainstaluje aktualizaci na macOS automaticky bez ruční práce v Terminalu.
 
-    Oprava:
-    - zapisuje samostatný install log,
-    - nahrazuje celou .app přes ditto místo tichého rsync,
-    - pro /Applications používá administrátorský dialog přes osascript,
-    - po kopii nastaví oprávnění a odstraní quarantine atribut,
-    - znovu otevře přímo .app bundle.
+    Důležité:
+    - pokud je aplikace v /Applications, macOS si může vyžádat admin heslo,
+      protože běžná aplikace nesmí potichu přepsat /Applications,
+    - uživatel ale nemusí nic kopírovat ani spouštět ručně,
+    - instalaci spouští samostatný launcher skript, který přežije ukončení aplikace,
+    - instalační skript jen kopíruje .app; nové spuštění provede launcher jako běžný uživatel,
+      ne jako root. Tím se vyhne problémům, kdy se po admin instalaci aplikace znovu neotevře.
     """
     ensure_macos_update_target_is_valid()
 
     temp_root = tempfile.gettempdir()
     temp_extract_dir = os.path.join(temp_root, "sifrator_update_extract")
     sh_path = os.path.join(temp_root, "sifrator_update.sh")
+    launcher_path = os.path.join(temp_root, "sifrator_update_launcher.sh")
     install_log = get_update_install_log_path()
 
     if os.path.exists(temp_extract_dir):
@@ -705,11 +707,16 @@ def _install_update_macos(zip_path: str, target_path: str, progress_callback: Pr
     backup_q = _sh_quote(backup_path)
     log_q = _sh_quote(install_log)
 
-    _emit_progress(progress_callback, 96, "Připravuji restart aplikace...")
+    _emit_progress(progress_callback, 96, "Připravuji automatickou instalaci...")
     _debug_log(f"macOS payload: {payload_path}")
     _debug_log(f"macOS install log: {install_log}")
+    _debug_log(f"macOS installer script: {sh_path}")
+    _debug_log(f"macOS launcher script: {launcher_path}")
 
-    shell_script = f'''#!/bin/sh
+    # Tento skript běží buď přímo, nebo přes osascript s admin právy.
+    # Záměrně už NEspouští aplikaci. Pouze přepíše .app a skončí.
+    # Novou aplikaci otevře až launcher skript jako normální uživatel.
+    installer_script = f'''#!/bin/sh
 set -u
 
 LOG={log_q}
@@ -727,6 +734,7 @@ echo "SOURCE=$SOURCE"
 echo "TARGET=$TARGET"
 echo "BACKUP=$BACKUP"
 echo "PID_TO_WAIT=$PID_TO_WAIT"
+echo "USER=$(id -un) UID=$(id -u)"
 
 echo "Cekam na ukonceni puvodni aplikace..."
 COUNT=0
@@ -744,15 +752,25 @@ if [ ! -e "$SOURCE" ]; then
     exit 10
 fi
 
-if [ ! -e "$TARGET" ]; then
-    echo "CHYBA: Cilova aplikace neexistuje: $TARGET"
+if [ ! -d "$SOURCE" ]; then
+    echo "CHYBA: Zdroj aktualizace neni adresar .app: $SOURCE"
+    exit 14
+fi
+
+TARGET_PARENT=$(dirname "$TARGET")
+if [ ! -d "$TARGET_PARENT" ]; then
+    echo "CHYBA: Cilova slozka neexistuje: $TARGET_PARENT"
     exit 11
 fi
 
 echo "Vytvarim zalohu..."
 rm -rf "$BACKUP"
 mkdir -p "$BACKUP"
-/usr/bin/ditto "$TARGET" "$BACKUP/$(basename "$TARGET")" || echo "VAROVANI: zaloha se nepovedla"
+if [ -e "$TARGET" ]; then
+    /usr/bin/ditto "$TARGET" "$BACKUP/$(basename "$TARGET")" || echo "VAROVANI: zaloha se nepovedla"
+else
+    echo "Cilova aplikace jeste neexistuje, zaloha nebude."
+fi
 
 echo "Mazu starou aplikaci..."
 rm -rf "$TARGET"
@@ -778,47 +796,131 @@ fi
 echo "Nastavuji opravneni..."
 chmod -R u+rwX "$TARGET" || true
 if [ -d "$TARGET/Contents/MacOS" ]; then
-    chmod -R u+x "$TARGET/Contents/MacOS" || true
+    chmod -R a+x "$TARGET/Contents/MacOS" || true
 fi
 
 echo "Odstranuji quarantine atribut..."
 /usr/bin/xattr -dr com.apple.quarantine "$TARGET" || true
 
 echo "Kontrola vysledku:"
-if [ -d "$TARGET" ]; then
-    find "$TARGET/Contents/MacOS" -maxdepth 1 -type f -print || true
+if [ ! -d "$TARGET" ]; then
+    echo "CHYBA: Cilova aplikace po kopirovani neexistuje."
+    exit 15
 fi
-
-echo "Spoustim aktualizovanou aplikaci..."
-/usr/bin/open "$TARGET"
-OPEN_CODE=$?
-echo "open exit code: $OPEN_CODE"
+if [ -d "$TARGET/Contents/MacOS" ]; then
+    find "$TARGET/Contents/MacOS" -maxdepth 1 -type f -print || true
+else
+    echo "CHYBA: Chybi Contents/MacOS v nove aplikaci."
+    exit 16
+fi
 
 date
 echo "Instalace aktualizace dokoncena."
-exit "$OPEN_CODE"
+exit 0
 '''
 
     with open(sh_path, "w", encoding="utf-8") as file:
-        file.write(shell_script)
+        file.write(installer_script)
 
     try:
         os.chmod(sh_path, 0o755)
     except Exception:
         pass
 
+    target_parent = os.path.dirname(os.path.abspath(target_path)) or "/"
+    # /Applications obvykle vyžaduje admin práva. Když cílová složka není zapisovatelná,
+    # použije se admin dialog také. Bez toho macOS starou aplikaci nepřepíše.
+    use_admin = (
+        os.path.abspath(target_path).startswith("/Applications/")
+        or not os.access(target_parent, os.W_OK)
+    )
+
+    # AppleScript je záměrně ve tvaru: /bin/sh + quoted form of script path.
+    # Předchozí varianta s ručně vloženými uvozovkami mohla v osascriptu selhat.
+    apple_script = 'do shell script "/bin/sh " & quoted form of ' + json.dumps(sh_path) + ' with administrator privileges'
+    apple_script_q = _sh_quote(apple_script)
+    sh_path_q = _sh_quote(sh_path)
+    target_q_for_launcher = _sh_quote(target_path)
+    log_q_for_launcher = _sh_quote(install_log)
+
+    # Launcher běží jako běžný uživatel, zapíše chyby osascriptu do logu,
+    # po úspěšné instalaci znovu otevře aplikaci a při chybě zobrazí dialog.
+    launcher_script = f'''#!/bin/sh
+set -u
+
+LOG={log_q_for_launcher}
+TARGET={target_q_for_launcher}
+INSTALLER={sh_path_q}
+USE_ADMIN={1 if use_admin else 0}
+APPLE_SCRIPT={apple_script_q}
+
+exec >> "$LOG" 2>&1
+
+echo "============================================================"
+date
+echo "Launcher aktualizace spusten"
+echo "TARGET=$TARGET"
+echo "INSTALLER=$INSTALLER"
+echo "USE_ADMIN=$USE_ADMIN"
+
+if [ "$USE_ADMIN" = "1" ]; then
+    echo "Spoustim instalaci pres osascript s administrator privileges..."
+    /usr/bin/osascript -e "$APPLE_SCRIPT"
+    CODE=$?
+else
+    echo "Spoustim instalaci bez administrator privileges..."
+    /bin/sh "$INSTALLER"
+    CODE=$?
+fi
+
+echo "installer/osascript exit code: $CODE"
+
+if [ "$CODE" -ne 0 ]; then
+    echo "CHYBA: Instalace aktualizace selhala."
+    /usr/bin/osascript -e 'display dialog "Aktualizace Šifrátoru Mraveniště se nepodařila. Podrobnosti jsou v instalačním logu." buttons {{"OK"}} default button "OK" with icon stop' >/dev/null 2>&1 || true
+    exit "$CODE"
+fi
+
+echo "Instalace probehla, spoustim novou aplikaci..."
+/usr/bin/xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
+/usr/bin/open "$TARGET"
+OPEN_CODE=$?
+echo "open exit code: $OPEN_CODE"
+
+if [ "$OPEN_CODE" -ne 0 ]; then
+    /usr/bin/osascript -e 'display dialog "Aktualizace proběhla, ale aplikaci se nepodařilo automaticky znovu spustit. Otevři ji prosím z Applications." buttons {{"OK"}} default button "OK" with icon caution' >/dev/null 2>&1 || true
+fi
+
+date
+echo "Launcher aktualizace dokoncen."
+exit "$OPEN_CODE"
+'''
+
+    with open(launcher_path, "w", encoding="utf-8") as file:
+        file.write(launcher_script)
+
+    try:
+        os.chmod(launcher_path, 0o755)
+    except Exception:
+        pass
+
     _emit_progress(progress_callback, 100, "Aktualizace je připravená. Aplikace se restartuje...")
     time.sleep(0.4)
 
-    use_admin = os.path.abspath(target_path).startswith("/Applications/")
-    _debug_log(f"Spouštím macOS instalační skript. use_admin={use_admin}, script={sh_path}")
+    _debug_log(
+        "Spouštím macOS launcher aktualizace. "
+        f"use_admin={use_admin}, launcher={launcher_path}, installer={sh_path}"
+    )
 
-    if use_admin:
-        quoted_script_for_applescript = sh_path.replace('\\', '\\\\').replace('\"', '\\"')
-        apple_script = f'do shell script "\"/bin/sh\" \"{quoted_script_for_applescript}\"" with administrator privileges'
-        subprocess.Popen(["/usr/bin/osascript", "-e", apple_script], shell=False)
-    else:
-        subprocess.Popen(["/bin/sh", sh_path], shell=False)
+    # Launcher musí být samostatný proces, aby přežil ukončení aktuální aplikace.
+    with open(install_log, "a", encoding="utf-8") as log_file:
+        subprocess.Popen(
+            ["/bin/sh", launcher_path],
+            stdout=log_file,
+            stderr=log_file,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
     sys.exit(0)
 
