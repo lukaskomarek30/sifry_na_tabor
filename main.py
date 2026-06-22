@@ -7108,7 +7108,16 @@ def _print_current_result_with_options(self):
     printer = QPrinter(QPrinter.HighResolution)
     preview = QPrintPreviewDialog(printer, self)
     preview.setWindowTitle("Náhled tisku")
-    preview.resize(1100, 800)
+    try:
+        screen = self.window().screen() if hasattr(self, "window") and self.window() is not None else QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        if available is not None:
+            preview.resize(min(1100, int(available.width() * 0.92)), min(800, int(available.height() * 0.88)))
+            preview.setMinimumSize(min(760, preview.width()), min(540, preview.height()))
+        else:
+            preview.resize(1100, 800)
+    except Exception:
+        preview.resize(1100, 800)
 
     def render_preview(target_printer):
         document.print_(target_printer)
@@ -7173,8 +7182,23 @@ def _print_current_result_with_live_preview(self):
     dialog = QDialog(self)
     dialog.setWindowTitle("Náhled tisku – Šifrátor Mraveniště")
     dialog.setModal(True)
-    dialog.resize(1280, 850)
-    dialog.setMinimumSize(1020, 700)
+
+    # Responzivní velikost náhledu tisku podle aktuální obrazovky.
+    try:
+        screen = self.window().screen() if hasattr(self, "window") and self.window() is not None else QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+    except Exception:
+        available = None
+
+    if available is not None:
+        dialog_w = min(1280, max(760, int(available.width() * 0.94)))
+        dialog_h = min(850, max(560, int(available.height() * 0.90)))
+    else:
+        dialog_w, dialog_h = 1280, 850
+
+    compact_print_preview = dialog_w < 1080 or dialog_h < 720
+    dialog.resize(dialog_w, dialog_h)
+    dialog.setMinimumSize(min(760, dialog_w), min(540, dialog_h))
     dialog.setStyleSheet("""
         QDialog {
             background-color: #0a1626;
@@ -7274,15 +7298,23 @@ def _print_current_result_with_live_preview(self):
     title.setStyleSheet("font-weight: 700; font-size: 18px; color: #f8e8c2;")
     main_layout.addWidget(title)
 
-    content_layout = QHBoxLayout()
-    content_layout.setSpacing(14)
+    content_layout = QVBoxLayout() if compact_print_preview else QHBoxLayout()
+    content_layout.setSpacing(10 if compact_print_preview else 14)
     main_layout.addLayout(content_layout, 1)
 
     side_scroll = QScrollArea(dialog)
     side_scroll.setWidgetResizable(True)
     side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    side_scroll.setMinimumWidth(350)
-    side_scroll.setMaximumWidth(410)
+    if compact_print_preview:
+        side_scroll.setMinimumWidth(0)
+        side_scroll.setMaximumWidth(16777215)
+        side_scroll.setMinimumHeight(min(220, max(170, int(dialog_h * 0.28))))
+        side_scroll.setMaximumHeight(min(330, max(220, int(dialog_h * 0.38))))
+    else:
+        side_w_min = min(350, max(300, int(dialog_w * 0.27)))
+        side_w_max = min(410, max(330, int(dialog_w * 0.32)))
+        side_scroll.setMinimumWidth(side_w_min)
+        side_scroll.setMaximumWidth(side_w_max)
 
     side_panel = QFrame()
     side_panel.setObjectName("sidePanel")
@@ -7415,8 +7447,8 @@ def _print_current_result_with_live_preview(self):
     page_frame = QFrame(dialog)
     page_frame.setObjectName("pageFrame")
     page_layout = QVBoxLayout(page_frame)
-    page_layout.setContentsMargins(18, 18, 18, 18)
-    page_layout.setSpacing(10)
+    page_layout.setContentsMargins(10 if compact_print_preview else 18, 10 if compact_print_preview else 18, 10 if compact_print_preview else 18, 10 if compact_print_preview else 18)
+    page_layout.setSpacing(8 if compact_print_preview else 10)
     preview_header = QLabel("Náhled stránky", page_frame)
     preview_header.setStyleSheet("font-size: 16px; font-weight: 700;")
     page_layout.addWidget(preview_header)
