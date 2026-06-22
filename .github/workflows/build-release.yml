@@ -651,14 +651,10 @@ jobs:
 
           lines = []
 
-          def blank():
-              lines.append('')
+          raw_base = f'https://raw.githubusercontent.com/{repo}/main/docs/img'
 
           def open_details(title: str, opened: bool = False):
-              if opened:
-                  lines.append('<details open>')
-              else:
-                  lines.append('<details>')
+              lines.append('<details open>' if opened else '<details>')
               lines.append(f'<summary><strong>{title}</strong></summary>')
               lines.append('')
 
@@ -667,70 +663,46 @@ jobs:
               lines.append('</details>')
               lines.append('')
 
-          lines.append(f'# Šifrátor Mraveniště {tag}')
-          lines.append('')
-          lines.append(f'Nová verze aplikace **Šifrátor Mraveniště** `{tag}`.')
-          lines.append('')
-          lines.append('Kliknutím na nadpis níže si rozbalíš konkrétní část poznámek k vydání.')
-          lines.append('')
+          def badge(label: str, message: str, color: str) -> str:
+              label = label.replace('-', '--').replace('_', '__').replace(' ', '%20')
+              message = message.replace('-', '--').replace('_', '__').replace(' ', '%20')
+              return f'![{label}: {message}](https://img.shields.io/badge/{label}-{message}-{color})'
 
-          open_details('Stav vydání')
-          lines.append('| Kontrola | Stav |')
+          lines.append(f'# 🐜 Šifrátor Mraveniště {tag}')
+          lines.append('')
+          lines.append(f'**Nová verze aplikace Šifrátor Mraveniště** `{tag}` připravená pro Windows i macOS.')
+          lines.append('')
+          lines.append(' '.join([
+              badge('Windows', 'x64', '0078D4'),
+              badge('macOS', 'Apple%20Silicon', '000000'),
+              badge('macOS', 'Intel', '555555'),
+              badge('Updater', 'update.json', '2EA44F'),
+              badge('Build', 'ověřeno', '8A2BE2'),
+          ]))
+          lines.append('')
+          lines.append('> Kliknutím na nadpis rozbalíš jen tu část, kterou právě potřebuješ.')
+          lines.append('')
+          lines.append('| Rychlý přehled | Hodnota |')
           lines.append('|---|---|')
-          lines.append('| Windows x64 build | ✅ OK |')
-          lines.append('| macOS Apple Silicon arm64 build | ✅ OK |')
-          lines.append('| macOS Intel x64 build | ✅ OK |')
-          lines.append('| Smoke test zdrojových souborů | ✅ OK |')
-          lines.append('| Smoke test hotových aplikací | ✅ OK |')
-          lines.append('| ZIP struktura | ✅ OK |')
-          lines.append('| SHA256 kontrola | ✅ OK |')
-          lines.append('| update.json | ✅ OK |')
-          close_details()
-
-          open_details('Stažení')
-          lines.append('| Systém | Soubor | Pro koho | Velikost |')
-          lines.append('|---|---|---|---:|')
-          for label, filename, target, size, sha in zips:
-              lines.append(f'| {label} | `{filename}` | {target} | {size} |')
+          lines.append(f'| 🏷️ Verze | `{tag}` |')
+          lines.append('| 🪟 Windows | `windows-x64` |')
+          lines.append('| 🍎 Mac Apple Silicon | `macos-arm64` |')
+          lines.append('| 💻 Mac Intel | `macos-x64` |')
+          lines.append('| 🔄 Automatické aktualizace | `update.json` |')
           lines.append('')
-          lines.append('Soubory ke stažení najdeš také dole v části **Assets** u tohoto GitHub Release.')
-          close_details()
 
-          open_details('Co je nového')
-          any_commit = False
-          for title, items in categories.items():
-              if not items:
-                  continue
-              any_commit = True
-              lines.append(f'### {title}')
-              lines.append('')
-              for item in items[:30]:
-                  lines.append(item)
-              if len(items) > 30:
-                  lines.append(f'- …a dalších {len(items) - 30} změn')
-              lines.append('')
-          if not any_commit:
-              lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam commitů.')
-          close_details()
-
-          open_details('SHA256')
-          lines.append('Kontrolní součty stažených ZIP balíčků:')
+          open_details('🚀 První spuštění', opened=True)
+          lines.append('### Doporučený výběr balíčku')
           lines.append('')
-          lines.append('```text')
-          for label, filename, target, size, sha in zips:
-              lines.append(f'{sha}  {filename}')
-          lines.append('```')
-          close_details()
-
-          open_details('První spuštění')
-          lines.append('- **Windows:** stáhni `windows-x64`, rozbal ZIP a spusť aplikaci.')
-          lines.append('- **Mac Apple Silicon:** stáhni `macos-arm64`.')
-          lines.append('- **Mac Intel:** stáhni `macos-x64`.')
+          lines.append('| Zařízení | Stáhni soubor | Poznámka |')
+          lines.append('|---|---|---|')
+          lines.append('| 🪟 Windows 10/11 | `windows-x64` | Rozbal ZIP a spusť `.exe` |')
+          lines.append('| 🍎 Mac Apple Silicon | `macos-arm64` | M1/M2/M3/M4/A18 Pro |')
+          lines.append('| 💻 Mac Intel | `macos-x64` | Starší Intel Mac |')
           lines.append('')
-          lines.append('Aplikace pro macOS zatím není notarizovaná přes Apple Developer Program. Pokud macOS zobrazí upozornění o neidentifikovaném vývojáři, postupuj podle souboru `README_PRVNI_SPUSTENI.md` nebo `README_PRVNI_SPUSTENI.txt`.')
-          lines.append('')
-          raw_base = f'https://raw.githubusercontent.com/{repo}/main/docs/img'
           lines.append('### macOS – povolení prvního spuštění')
+          lines.append('')
+          lines.append('Aplikace pro macOS zatím není podepsaná a notarizovaná placeným Apple Developer certifikátem. Proto může macOS při prvním spuštění zobrazit bezpečnostní upozornění.')
           lines.append('')
           lines.append('1. Pokud se zobrazí hláška o neidentifikovaném vývojáři, klikni na **OK**.')
           lines.append('')
@@ -743,25 +715,84 @@ jobs:
           lines.append('3. Potvrď spuštění tlačítkem **Open**.')
           lines.append('')
           lines.append(f'![macOS Open]({raw_base}/macos_02_open_confirmation.png)')
+          lines.append('')
+          lines.append('Podrobný návod je přiložen také jako `README_PRVNI_SPUSTENI.md` a `README_PRVNI_SPUSTENI.txt` v assets tohoto vydání.')
           close_details()
 
-          open_details('Automatické aktualizace')
+          open_details('📦 Stažení')
+          lines.append('| Systém | Soubor | Pro koho | Velikost |')
+          lines.append('|---|---|---|---:|')
+          for label, filename, target, size, sha in zips:
+              lines.append(f'| {label} | `{filename}` | {target} | {size} |')
+          lines.append('')
+          lines.append('Soubory ke stažení najdeš dole v části **Assets** u tohoto GitHub Release.')
+          close_details()
+
+          open_details('✅ Stav vydání')
+          lines.append('| Kontrola | Stav |')
+          lines.append('|---|---|')
+          lines.append('| 🪟 Windows x64 build | ✅ OK |')
+          lines.append('| 🍎 macOS Apple Silicon arm64 build | ✅ OK |')
+          lines.append('| 💻 macOS Intel x64 build | ✅ OK |')
+          lines.append('| 🧪 Smoke test zdrojových souborů | ✅ OK |')
+          lines.append('| 🧪 Smoke test hotových aplikací | ✅ OK |')
+          lines.append('| 📦 ZIP struktura | ✅ OK |')
+          lines.append('| 🔐 SHA256 kontrola | ✅ OK |')
+          lines.append('| 🔄 update.json | ✅ OK |')
+          close_details()
+
+          open_details('✨ Co je nového')
+          any_commit = False
+          category_icons = {
+              'Nové funkce a UI': '🎨',
+              'Opravy chyb': '🛠️',
+              'Build, testy a release': '🏗️',
+              'Dokumentace': '📘',
+              'Ostatní změny': '📌',
+          }
+          for title, items in categories.items():
+              if not items:
+                  continue
+              any_commit = True
+              icon = category_icons.get(title, '📌')
+              lines.append(f'### {icon} {title}')
+              lines.append('')
+              for item in items[:30]:
+                  lines.append(item)
+              if len(items) > 30:
+                  lines.append(f'- …a dalších {len(items) - 30} změn')
+              lines.append('')
+          if not any_commit:
+              lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam commitů.')
+          close_details()
+
+          open_details('🔄 Automatické aktualizace')
           lines.append('Součástí vydání je `update.json`, který používá automatický updater aplikace.')
           lines.append('')
-          lines.append('Aplikace si podle systému vybere správný balíček:')
+          lines.append('| Platforma v aplikaci | Balíček z update.json |')
+          lines.append('|---|---|')
+          lines.append('| `windows-x64` | Windows build |')
+          lines.append('| `macos-arm64` | Mac Apple Silicon build |')
+          lines.append('| `macos-x64` | Mac Intel build |')
           lines.append('')
-          lines.append('- `windows-x64` pro Windows')
-          lines.append('- `macos-arm64` pro Apple Silicon')
-          lines.append('- `macos-x64` pro Intel Mac')
+          lines.append('Po vydání se `update.json` automaticky commitne zpět do repozitáře, aby aplikace našla novou verzi.')
           close_details()
 
-          open_details('Porovnání změn')
+          open_details('🔐 SHA256')
+          lines.append('Kontrolní součty stažených ZIP balíčků:')
+          lines.append('')
+          lines.append('```text')
+          for label, filename, target, size, sha in zips:
+              lines.append(f'{sha}  {filename}')
+          lines.append('```')
+          close_details()
+
+          open_details('🧾 Porovnání změn')
           if previous_tag:
               lines.append(f'**Full changelog:** {full_changelog}')
           else:
               lines.append('Toto je první tag, který workflow našlo pro porovnání.')
           close_details()
-
           notes = '\n'.join(lines).strip() + '\n'
           Path('RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
           print(notes)
