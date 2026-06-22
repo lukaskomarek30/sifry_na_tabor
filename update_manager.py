@@ -553,6 +553,120 @@ def _extract_zip_with_progress(zip_path: str, extract_dir: str, progress_callbac
             _emit_progress(progress_callback, value, f"Rozbaluji aktualizaci... {index} / {total}")
 
 
+
+def _extract_macos_zip_with_ditto(zip_path: str, extract_dir: str, progress_callback: ProgressCallback | None = None) -> None:
+    """Rozbalí macOS aktualizační ZIP přes systémové ditto.
+
+    Pro macOS .app balíčky je to zásadní, protože Python zipfile neumí vždy
+    správně obnovit symlinky uvnitř Contents/Frameworks. Když se symlink
+    Contents/Frameworks/Python rozbalí špatně, PyInstaller aplikace pak končí
+    chybou: Failed to load Python shared library.
+    """
+    if platform.system().lower() != "darwin" or not os.path.exists("/usr/bin/ditto"):
+        _debug_log("macOS ditto není dostupné, používám Python zipfile fallback.")
+        _extract_zip_with_progress(zip_path, extract_dir, progress_callback=progress_callback)
+        return
+
+    _emit_progress(progress_callback, 80, "Rozbaluji aktualizaci přes macOS ditto...")
+    _debug_log(f"macOS ditto extract: ZIP={zip_path}, DIR={extract_dir}")
+
+    completed = subprocess.run(
+        ["/usr/bin/ditto", "-x", "-k", zip_path, extract_dir],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    if completed.stdout.strip():
+        _debug_log("ditto stdout: " + completed.stdout.strip())
+    if completed.stderr.strip():
+        _debug_log("ditto stderr: " + completed.stderr.strip())
+
+    if completed.returncode != 0:
+        raise UpdateError(
+            "Rozbalení macOS aktualizace přes ditto selhalo.\n"
+            f"Kód: {completed.returncode}\n"
+            f"Chyba: {completed.stderr.strip()}"
+        )
+
+    _emit_progress(progress_callback, 94, "Aktualizace byla rozbalena.")
+    _debug_log("macOS ditto extract OK.")
+
+
+def _validate_macos_app_payload(app_path: str) -> None:
+    """Zkontroluje, že rozbalený macOS .app balíček vypadá použitelně."""
+    if platform.system().lower() != "darwin":
+        return
+
+    if not app_path.endswith(".app"):
+        raise UpdateError(f"Rozbalený macOS payload není .app balíček: {app_path}")
+
+    contents_dir = os.path.join(app_path, "Contents")
+    macos_dir = os.path.join(contents_dir, "MacOS")
+    frameworks_dir = os.path.join(contents_dir, "Frameworks")
+
+    if not os.path.isdir(contents_dir):
+        raise UpdateError(f"V .app balíčku chybí Contents: {contents_dir}")
+
+    if not os.path.isdir(macos_dir):
+        raise UpdateError(f"V .app balíčku chybí Contents/MacOS: {macos_dir}")
+
+    executables = []
+    try:
+        for name in os.listdir(macos_dir):
+            candidate = os.path.join(macos_dir, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                executables.append(candidate)
+    except Exception:
+        pass
+
+    if not executables:
+        # Některé ZIPy můžou po rozbalení ještě nemít executable bit, proto
+        # zkusíme najít aspoň hlavní soubor podle názvu aplikace.
+        fallback = os.path.join(macos_dir, os.path.basename(app_path).replace(".app", ""))
+        if not os.path.isfile(fallback):
+            raise UpdateError(f"V .app balíčku nebyl nalezen spustitelný soubor v {macos_dir}")
+
+    if not os.path.isdir(frameworks_dir):
+        _debug_log(f"Upozornění: v .app balíčku není Contents/Frameworks: {frameworks_dir}")
+        return
+
+    python_link = os.path.join(frameworks_dir, "Python")
+    if os.path.lexists(python_link):
+        if os.path.islink(python_link):
+            target = os.readlink(python_link)
+            _debug_log(f"Kontrola Python frameworku: symlink Contents/Frameworks/Python -> {target}")
+            if not os.path.exists(python_link):
+                raise UpdateError(f"Rozbitý symlink v .app balíčku: {python_link} -> {target}")
+        elif os.path.isfile(python_link):
+            try:
+                completed = subprocess.run(
+                    ["/usr/bin/file", "-b", python_link],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                description = (completed.stdout or completed.stderr or "").strip()
+            except Exception as error:
+                description = f"file kontrola selhala: {error}"
+
+            _debug_log(f"Kontrola Python frameworku: {python_link}: {description}")
+            if "Mach-O" not in description:
+                raise UpdateError(
+                    "Rozbalený macOS .app balíček má poškozený Python framework.\n"
+                    "To obvykle znamená, že ZIP byl rozbalen špatným způsobem.\n"
+                    f"Soubor: {python_link}\n"
+                    f"file: {description}"
+                )
+    else:
+        _debug_log("Contents/Frameworks/Python nebyl nalezen; pokračuji, protože struktura se může lišit podle PyInstalleru.")
+
 def _install_update_windows(zip_path: str, target_dir: str, run_file_name: str, progress_callback: ProgressCallback | None = None) -> None:
     temp_root = tempfile.gettempdir()
     temp_extract_dir = os.path.join(temp_root, "sifrator_update_extract")
@@ -686,7 +800,11 @@ def _install_update_macos(zip_path: str, target_path: str, progress_callback: Pr
 
     _emit_progress(progress_callback, 80, "Rozbaluji aktualizaci...")
     _debug_log(f"macOS instalace: ZIP={zip_path}, TARGET={target_path}")
-    _extract_zip_with_progress(zip_path, temp_extract_dir, progress_callback=progress_callback)
+
+    # macOS .app balíček se musí rozbalit přes ditto, ne přes Python zipfile.
+    # zipfile neumí spolehlivě obnovit symlinky uvnitř Contents/Frameworks
+    # a tím může rozbít PyInstaller Python runtime.
+    _extract_macos_zip_with_ditto(zip_path, temp_extract_dir, progress_callback=progress_callback)
 
     if target_path.endswith(".app"):
         payload_path = _find_macos_app_payload(temp_extract_dir, target_path)
@@ -698,6 +816,9 @@ def _install_update_macos(zip_path: str, target_path: str, progress_callback: Pr
 
     if target_path.endswith(".app") and not payload_path.endswith(".app"):
         raise UpdateError(f"V ZIPu nebyl nalezen .app balíček. Nalezeno: {payload_path}")
+
+    if target_path.endswith(".app"):
+        _validate_macos_app_payload(payload_path)
 
     current_pid = os.getpid()
     backup_path = os.path.join(temp_root, f"sifrator_backup_{int(time.time())}")
@@ -812,6 +933,42 @@ if [ -d "$TARGET/Contents/MacOS" ]; then
 else
     echo "CHYBA: Chybi Contents/MacOS v nove aplikaci."
     exit 16
+fi
+
+echo "Kontrola Contents/Frameworks:"
+if [ -d "$TARGET/Contents/Frameworks" ]; then
+    ls -la "$TARGET/Contents/Frameworks" || true
+else
+    echo "VAROVANI: Chybi Contents/Frameworks."
+fi
+
+PYTHON_RUNTIME="$TARGET/Contents/Frameworks/Python"
+if [ -e "$PYTHON_RUNTIME" ] || [ -L "$PYTHON_RUNTIME" ]; then
+    echo "Kontrola Python runtime: $PYTHON_RUNTIME"
+    ls -la "$PYTHON_RUNTIME" || true
+
+    if [ -L "$PYTHON_RUNTIME" ]; then
+        echo "Python runtime je symlink."
+    else
+        PYTHON_FILE_INFO=$(/usr/bin/file -b "$PYTHON_RUNTIME" 2>/dev/null || true)
+        echo "file Python runtime: $PYTHON_FILE_INFO"
+        case "$PYTHON_FILE_INFO" in
+            *Mach-O*)
+                echo "Python runtime vypada v poradku."
+                ;;
+            *)
+                echo "CHYBA: Python runtime neni Mach-O soubor. Aplikace by po aktualizaci nesla spustit."
+                echo "Obnovuji zalohu."
+                rm -rf "$TARGET"
+                if [ -e "$BACKUP/$(basename "$TARGET")" ]; then
+                    /usr/bin/ditto "$BACKUP/$(basename "$TARGET")" "$TARGET" || true
+                fi
+                exit 17
+                ;;
+        esac
+    fi
+else
+    echo "Python runtime Contents/Frameworks/Python nebyl nalezen; pokracuji, protoze struktura se muze lisit."
 fi
 
 date
