@@ -542,6 +542,13 @@ jobs:
 
           if not Path('README_PRVNI_SPUSTENI.txt').exists():
               Path('README_PRVNI_SPUSTENI.txt').write_text('Šifrátor Mraveniště – první spuštění\n', encoding='utf-8')
+
+          if not Path('README_PRVNI_SPUSTENI.md').exists():
+              Path('README_PRVNI_SPUSTENI.md').write_text(
+                  '# Šifrátor Mraveniště – první spuštění\n\n'
+                  'Podrobný návod pro první spuštění zatím nebyl v repozitáři nalezen.\n',
+                  encoding='utf-8',
+              )
           PY
 
       - name: Vytvořit profesionální poznámky k release
@@ -682,8 +689,7 @@ jobs:
               lines.append('')
 
           def badge(label: str, message: str, color: str) -> str:
-              # Shields.io používá v URL speciální escaping:
-              # mezery = %20, pomlčky v textu = --, podtržítka = __.
+              # Shields.io escaping: mezery = %20, pomlčky v textu = --, podtržítka = __.
               safe_label = str(label).replace('-', '--').replace('_', '__').replace(' ', '%20')
               safe_message = str(message).replace('-', '--').replace('_', '__').replace(' ', '%20')
               return f'![{label}: {message}](https://img.shields.io/badge/{safe_label}-{safe_message}-{color})'
@@ -696,58 +702,43 @@ jobs:
 
           lines.append(f'# 🐜 Šifrátor Mraveniště {tag}')
           lines.append('')
-          lines.append(f'**Nová verze aplikace Šifrátor Mraveniště** `{tag}` je připravená pro Windows i macOS.')
+          lines.append('**Nová verze aplikace Šifrátor Mraveniště je připravená ke stažení.**')
           lines.append('')
           lines.append(' '.join([
-              linked_badge('Windows', 'x64', '0078D4', windows_url),
-              linked_badge('macOS', 'Apple Silicon', '000000', mac_arm_url),
-              linked_badge('macOS', 'Intel', '555555', mac_intel_url),
-              linked_badge('Updater', 'update.json', '2EA44F', update_json_url),
-              linked_badge('SHA256', 'ověřeno', '0A7E45', sha256_url),
-              linked_badge('Build', 'Actions', '8A2BE2', actions_url),
+              linked_badge('Stáhnout', 'Windows', '0078D4', windows_url),
+              linked_badge('Stáhnout', 'Mac Apple Silicon', '000000', mac_arm_url),
+              linked_badge('Stáhnout', 'Mac Intel', '555555', mac_intel_url),
+              linked_badge('Návod', 'první spuštění', 'C89A4C', readme_md_url),
           ]))
           lines.append('')
-          lines.append('> Kliknutím na štítky nahoře stáhneš konkrétní balíček nebo otevřeš související soubor.')
-          lines.append('> Níže jsou sekce schované do rozbalovacích bloků, aby Release nepůsobil přeplácaně.')
+          lines.append('> Vyber si verzi podle zařízení. Technické soubory jsou schované dole v sekci **Technické informace**.')
           lines.append('')
 
-          lines.append('## ⚓ Rychlé odkazy')
+          lines.append('## 📥 Stažení aplikace')
           lines.append('')
-          lines.append('| Akce | Odkaz |')
-          lines.append('|---|---|')
-          lines.append(f'| 🪟 Stáhnout Windows verzi | {link("windows-x64 ZIP", windows_url)} |')
-          lines.append(f'| 🍎 Stáhnout Mac Apple Silicon | {link("macos-arm64 ZIP", mac_arm_url)} |')
-          lines.append(f'| 💻 Stáhnout Mac Intel | {link("macos-x64 ZIP", mac_intel_url)} |')
-          lines.append(f'| 🚀 Návod první spuštění | {link("README_PRVNI_SPUSTENI.md", readme_md_url)} / {link("TXT verze", readme_txt_url)} |')
-          lines.append(f'| 🔄 Metadata updateru | {link("update.json", update_json_url)} |')
-          lines.append(f'| 🔐 Kontrolní součty | {link("SHA256SUMS.txt", sha256_url)} |')
-          lines.append(f'| 🏗️ GitHub Actions | {link("Buildy a release workflow", actions_url)} |')
+          lines.append('| Systém | Pro koho | Stáhnout |')
+          lines.append('|---|---|---|')
+          lines.append(f'| 🪟 **Windows** | Windows 10/11, 64bit | **{link("Stáhnout Windows verzi", windows_url)}** |')
+          lines.append(f'| 🍎 **macOS Apple Silicon** | Mac s čipem M1/M2/M3/M4/A18 Pro | **{link("Stáhnout macOS Apple Silicon", mac_arm_url)}** |')
+          lines.append(f'| 💻 **macOS Intel** | Starší Mac s procesorem Intel | **{link("Stáhnout macOS Intel", mac_intel_url)}** |')
           lines.append('')
-
-          lines.append('## 📋 Přehled vydání')
-          lines.append('')
-          lines.append('| Oblast | Stav |')
-          lines.append('|---|---|')
-          lines.append(f'| 🏷️ Verze | `{tag}` |')
-          lines.append('| 🪟 Windows | `windows-x64` ✅ |')
-          lines.append('| 🍎 Mac Apple Silicon | `macos-arm64` ✅ |')
-          lines.append('| 💻 Mac Intel | `macos-x64` ✅ |')
-          lines.append('| 🔄 Automatické aktualizace | `update.json` ✅ |')
-          lines.append('| 🔐 Ověření balíčků | `SHA256` ✅ |')
+          lines.append('**Nevíš, jakou macOS verzi stáhnout?** Apple Silicon znamená M1/M2/M3/M4/A18 Pro. Intel je starší Mac s procesorem Intel.')
           lines.append('')
 
           open_details('🚀 První spuštění', opened=True)
-          lines.append('### Doporučený výběr balíčku')
+          lines.append('### Windows')
           lines.append('')
-          lines.append('| Zařízení | Stáhni soubor | Poznámka |')
-          lines.append('|---|---|---|')
-          lines.append(f'| 🪟 Windows 10/11 | {link("windows-x64", windows_url)} | Rozbal ZIP a spusť `.exe` |')
-          lines.append(f'| 🍎 Mac Apple Silicon | {link("macos-arm64", mac_arm_url)} | M1/M2/M3/M4/A18 Pro |')
-          lines.append(f'| 💻 Mac Intel | {link("macos-x64", mac_intel_url)} | Starší Intel Mac |')
+          lines.append('1. Stáhni Windows ZIP.')
+          lines.append('2. ZIP rozbal do vlastní složky.')
+          lines.append('3. Spusť soubor `Sifrator_Mraveniste.exe`.')
           lines.append('')
-          lines.append('### macOS – povolení prvního spuštění')
+          lines.append('### macOS')
           lines.append('')
-          lines.append('Aplikace pro macOS zatím není podepsaná a notarizovaná placeným Apple Developer certifikátem. Proto může macOS při prvním spuštění zobrazit bezpečnostní upozornění.')
+          lines.append('1. Stáhni správnou macOS verzi podle typu Macu.')
+          lines.append('2. ZIP rozbal a aplikaci přesuň ideálně do složky **Applications / Aplikace**.')
+          lines.append('3. Při prvním spuštění může macOS zobrazit upozornění, protože aplikace zatím není podepsaná placeným Apple Developer certifikátem.')
+          lines.append('')
+          lines.append('#### macOS – povolení aplikace')
           lines.append('')
           lines.append('1. Pokud se zobrazí hláška o neidentifikovaném vývojáři, klikni na **OK**.')
           lines.append('')
@@ -761,29 +752,7 @@ jobs:
           lines.append('')
           lines.append(f'![macOS Open]({raw_base}/macos_02_open_confirmation.png)')
           lines.append('')
-          lines.append(f'Podrobný návod je přiložen jako {link("README_PRVNI_SPUSTENI.md", readme_md_url)} a {link("README_PRVNI_SPUSTENI.txt", readme_txt_url)} v assets tohoto vydání.')
-          close_details()
-
-          open_details('📦 Stažení')
-          lines.append('| Systém | Soubor | Pro koho | Velikost |')
-          lines.append('|---|---|---|---:|')
-          for label, filename, target, size, sha in zips:
-              lines.append(f'| {label} | {link(f"`{filename}`", zip_urls[filename])} | {target} | {size} |')
-          lines.append('')
-          lines.append('Soubory ke stažení najdeš také dole v části **Assets** u tohoto GitHub Release.')
-          close_details()
-
-          open_details('✅ Stav vydání')
-          lines.append('| Kontrola | Stav |')
-          lines.append('|---|---|')
-          lines.append('| 🪟 Windows x64 build | ✅ OK |')
-          lines.append('| 🍎 macOS Apple Silicon arm64 build | ✅ OK |')
-          lines.append('| 💻 macOS Intel x64 build | ✅ OK |')
-          lines.append('| 🧪 Smoke test zdrojových souborů | ✅ OK |')
-          lines.append('| 🧪 Smoke test hotových aplikací | ✅ OK |')
-          lines.append('| 📦 ZIP struktura | ✅ OK |')
-          lines.append('| 🔐 SHA256 kontrola | ✅ OK |')
-          lines.append('| 🔄 update.json | ✅ OK |')
+          lines.append(f'Podrobný návod: {link("README_PRVNI_SPUSTENI.md", readme_md_url)} / {link("TXT verze", readme_txt_url)}')
           close_details()
 
           open_details('✨ Co je nového')
@@ -808,35 +777,64 @@ jobs:
                   lines.append(f'- …a dalších {len(items) - 30} změn')
               lines.append('')
           if not any_commit:
-              lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam commitů.')
+              lines.append('- Pro tuto verzi se nepodařilo automaticky načíst seznam změn.')
           close_details()
 
-          open_details('🔄 Automatické aktualizace')
-          lines.append(f'Součástí vydání je {link("update.json", update_json_url)}, který používá automatický updater aplikace.')
+          open_details('📦 Všechny instalační balíčky')
+          lines.append('| Systém | Soubor | Velikost |')
+          lines.append('|---|---|---:|')
+          for label, filename, target, size, sha in zips:
+              lines.append(f'| {label} | {link(f"`{filename}`", zip_urls[filename])} | {size} |')
           lines.append('')
-          lines.append('| Platforma v aplikaci | Balíček z update.json |')
+          lines.append('Stejné soubory najdeš i dole v části **Assets** tohoto vydání.')
+          close_details()
+
+          open_details('❓ Časté dotazy')
+          lines.append('**macOS píše, že aplikace nejde otevřít.**')
+          lines.append('')
+          lines.append('Je to běžné u aplikací bez placeného Apple Developer podpisu. Použij postup v části **První spuštění**.')
+          lines.append('')
+          lines.append('**Musím instalovat Python?**')
+          lines.append('')
+          lines.append('Ne. Windows i macOS balíček už obsahuje vše potřebné.')
+          lines.append('')
+          lines.append('**Bude fungovat automatická aktualizace?**')
+          lines.append('')
+          lines.append('Ano, aplikace si sama vybere správný balíček podle systému.')
+          close_details()
+
+          open_details('🔧 Technické informace')
+          lines.append('Tato část je hlavně pro kontrolu vydání a pro vývojáře.')
+          lines.append('')
+          lines.append('### Stav buildu')
+          lines.append('')
+          lines.append('| Kontrola | Stav |')
           lines.append('|---|---|')
-          lines.append(f'| `windows-x64` | {link("Windows ZIP", windows_url)} |')
-          lines.append(f'| `macos-arm64` | {link("Mac Apple Silicon ZIP", mac_arm_url)} |')
-          lines.append(f'| `macos-x64` | {link("Mac Intel ZIP", mac_intel_url)} |')
+          lines.append('| Windows x64 build | ✅ OK |')
+          lines.append('| macOS Apple Silicon arm64 build | ✅ OK |')
+          lines.append('| macOS Intel x64 build | ✅ OK |')
+          lines.append('| Smoke test zdrojových souborů | ✅ OK |')
+          lines.append('| Smoke test hotových aplikací | ✅ OK |')
+          lines.append('| ZIP struktura | ✅ OK |')
+          lines.append('| SHA256 kontrola | ✅ OK |')
+          lines.append('| update.json | ✅ OK |')
           lines.append('')
-          lines.append('Po vydání se `update.json` automaticky commitne zpět do repozitáře, aby aplikace našla novou verzi.')
-          close_details()
-
-          open_details('🔐 SHA256')
-          lines.append(f'Kontrolní součty jsou přiložené také jako {link("SHA256SUMS.txt", sha256_url)}.')
+          lines.append('### Odkazy')
+          lines.append('')
+          lines.append('| Položka | Odkaz |')
+          lines.append('|---|---|')
+          lines.append(f'| Metadata updateru | {link("update.json", update_json_url)} |')
+          lines.append(f'| Kontrolní součty | {link("SHA256SUMS.txt", sha256_url)} |')
+          lines.append(f'| GitHub Actions | {link("Build workflow", actions_url)} |')
+          if previous_tag:
+              lines.append(f'| Porovnání změn | {link("Full changelog", full_changelog)} |')
+          lines.append('')
+          lines.append('### SHA256')
           lines.append('')
           lines.append('```text')
           for label, filename, target, size, sha in zips:
               lines.append(f'{sha}  {filename}')
           lines.append('```')
-          close_details()
-
-          open_details('🧾 Porovnání změn')
-          if previous_tag:
-              lines.append(f'**Full changelog:** {link(full_changelog, full_changelog)}')
-          else:
-              lines.append('Toto je první tag, který workflow našlo pro porovnání.')
           close_details()
           notes = '\n'.join(lines).strip() + '\n'
           Path('RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
