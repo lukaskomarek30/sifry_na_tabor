@@ -24,6 +24,7 @@ from typing import Any, Iterable
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QImage
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QFileDialog,
     QMessageBox,
+    QLabel,
 )
 
 PARCHMENT = QColor("#f3dfad")
@@ -266,15 +268,15 @@ class PirateKeyWidget(QWidget):
         self.print_mode = bool(self.key_data.get("print_mode") or self.key_data.get("_print_mode"))
         self.widget_class = self.key_data.get("widget_class")
         self._glyph_cache: dict[tuple[str, int, int], QPixmap] = {}
-        self.setMinimumWidth(980)
-        self.setMinimumHeight(self.estimate_height(1100))
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(self.estimate_height(920))
 
     def sizeHint(self) -> QSize:
-        width = max(980, self.width() or 1100)
+        width = max(760, self.width() or 1000)
         return QSize(width, self.estimate_height(width))
 
     def estimate_height(self, width: int) -> int:
-        width = max(820, int(width or 1100))
+        width = max(640, int(width or 1000))
         if self.key_type == "zlomky_key":
             return 360
         if self.key_type == "vlcacka_key":
@@ -310,7 +312,7 @@ class PirateKeyWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.setMinimumHeight(self.estimate_height(max(980, self.width())))
+        self.setMinimumHeight(self.estimate_height(max(720, self.width())))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -776,11 +778,111 @@ class PirateKeyWidget(QWidget):
         painter.drawText(rect, Qt.AlignCenter | Qt.TextWordWrap, text)
 
 
+# ============================================================
+# Responzivní náhled klíčů
+# ============================================================
+
+def _resize_dialog_to_available_screen(dialog: QDialog, parent: QWidget | None = None,
+                                       preferred_w: int = 1180, preferred_h: int = 820,
+                                       min_w: int = 760, min_h: int = 540) -> None:
+    """Nastaví velikost dialogu podle dostupné obrazovky.
+
+    Dialog klíče se nemá otevírat větší než aktuální monitor. Na malém Macu
+    nebo notebooku proto použije přibližně 94 % dostupné plochy a nechá obsah
+    ve scrollu. Na velkém monitoru zůstane rozumně velký.
+    """
+    try:
+        app = QApplication.instance()
+        screen = None
+        if parent is not None and hasattr(parent, "window") and parent.window() is not None:
+            try:
+                screen = parent.window().screen()
+            except Exception:
+                screen = None
+        if screen is None and app is not None:
+            screen = app.primaryScreen()
+        if screen is None:
+            dialog.resize(preferred_w, preferred_h)
+            dialog.setMinimumSize(min_w, min_h)
+            return
+
+        available = screen.availableGeometry()
+        max_w = max(640, int(available.width() * 0.94))
+        max_h = max(500, int(available.height() * 0.90))
+        width = min(preferred_w, max_w)
+        height = min(preferred_h, max_h)
+
+        dialog.resize(width, height)
+        dialog.setMinimumSize(min(min_w, width), min(min_h, height))
+
+        # Vycentrování zlepší chování na macOS i Windows.
+        frame = dialog.frameGeometry()
+        frame.moveCenter(available.center())
+        dialog.move(frame.topLeft())
+    except Exception:
+        dialog.resize(preferred_w, preferred_h)
+        dialog.setMinimumSize(min_w, min_h)
+
+
+class ResponsivePixmapLabel(QLabel):
+    """QLabel pro PNG klíč, který se přizpůsobí šířce okna.
+
+    Uložený PNG klíč v cache může mít šířku 1400–1500 px. Klasický QLabel by
+    si vynutil přesně tuto velikost, takže na menším displeji vznikne obrovské
+    okno nebo nepříjemný horizontální scroll. Tento widget ponechá originál pro
+    uložení, ale na obrazovce zobrazuje zmenšený náhled podle dostupné šířky.
+    """
+
+    def __init__(self, pixmap: QPixmap | None = None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._source_pixmap = QPixmap()
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(240, 180)
+        self.setScaledContents(False)
+        if pixmap is not None and not pixmap.isNull():
+            self.set_source_pixmap(pixmap)
+
+    def set_source_pixmap(self, pixmap: QPixmap) -> None:
+        self._source_pixmap = QPixmap(pixmap)
+        self._update_scaled_pixmap()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_scaled_pixmap()
+
+    def _update_scaled_pixmap(self) -> None:
+        if self._source_pixmap.isNull():
+            return
+
+        source_w = max(1, self._source_pixmap.width())
+        source_h = max(1, self._source_pixmap.height())
+
+        # 32 px nechává prostor pro vnitřní okraj / scrollbar.
+        target_w = max(260, self.width() - 32)
+        target_w = min(source_w, target_w)
+        target_h = max(1, int(source_h * (target_w / source_w)))
+
+        scaled = self._source_pixmap.scaled(
+            QSize(target_w, target_h),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+
+        current = self.pixmap()
+        if current is None or current.size() != scaled.size():
+            self.setPixmap(scaled)
+
+        wanted_h = scaled.height() + 32
+        if abs(self.minimumHeight() - wanted_h) > 4:
+            self.setMinimumHeight(wanted_h)
+        self.setMinimumWidth(0)
+
+
 class PirateKeyDialog(QDialog):
     def __init__(self, key_data: dict[str, Any], parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle(str(key_data.get("title", "Klíč šifry")))
-        self.resize(1180, 820)
+        _resize_dialog_to_available_screen(self, parent, 1180, 820, 760, 540)
         self.widget = PirateKeyWidget(key_data)
 
         scroll = QScrollArea(self)
@@ -1274,7 +1376,7 @@ class AsyncPirateKeyDialog(QDialog):
         self.scroll = None
 
         self.setWindowTitle(f"Klíč šifry – {cipher_name}")
-        self.resize(1180, 820)
+        _resize_dialog_to_available_screen(self, parent, 1180, 820, 760, 540)
 
         self.loading_label = QLabel("Připravuji klíč…\n\nOkno je otevřené hned, aby aplikace nepůsobila zaseknutě.", self)
         self.loading_label.setAlignment(Qt.AlignCenter)
@@ -1645,7 +1747,7 @@ class DiskCachedPirateKeyDialog(QDialog):
         self.QLabel = QLabel
 
         self.setWindowTitle(f"Klíč šifry – {cipher_name}")
-        self.resize(1180, 820)
+        _resize_dialog_to_available_screen(self, parent, 1180, 820, 760, 540)
 
         self.loading_label = QLabel("Připravuji klíč…\n\nPokud už je v cache, otevře se hned.", self)
         self.loading_label.setAlignment(Qt.AlignCenter)
@@ -1696,11 +1798,8 @@ class DiskCachedPirateKeyDialog(QDialog):
             if png_path:
                 pixmap = QPixmap(png_path)
                 if not pixmap.isNull():
-                    label = self.QLabel(self)
-                    label.setAlignment(Qt.AlignCenter)
+                    label = ResponsivePixmapLabel(pixmap, self)
                     label.setStyleSheet("background: #1c1208; padding: 16px;")
-                    label.setPixmap(pixmap)
-                    label.setMinimumSize(pixmap.size())
                     self.png_label = label
                     self.current_png_path = png_path
                     self._replace_loading_with_scroll_widget(label)
