@@ -126,6 +126,14 @@ macos-arm64
 macos-x64
 ```
 
+Uživatelská data se neukládají do instalační složky aplikace, ale do profilu uživatele:
+
+- Windows: `%APPDATA%\Sifrator_Mraveniste`
+- macOS: `~/Library/Application Support/Sifrator_Mraveniste`
+- Linux: `$XDG_DATA_HOME/Sifrator_Mraveniste` nebo `~/.local/share/Sifrator_Mraveniste`
+
+Do této složky patří historie zpráv, plán tábora, poznámky k šifrám, obrázky historie a lokálně vložené přílohy plánovače. Aktualizace programu proto může přepsat programové soubory, aniž by smazala uživatelský plán nebo poznámky.
+
 ---
 
 ## Vývojové spuštění
@@ -147,6 +155,20 @@ Smoke test:
 ```bash
 python main.py --smoke-test
 ```
+
+Předgenerování cache klíčů pro rychlejší první spuštění vydané aplikace:
+
+```bash
+python main.py --prebuild-key-cache
+```
+
+Na Windows můžeš použít také:
+
+```bat
+predgenerovat_cache.bat
+```
+
+Soubory vzniknou ve složce `cache/key_cache`. Build workflow tuhle složku automaticky přibalí do Windows/macOS aplikace.
 
 ---
 
@@ -186,10 +208,12 @@ Workflow vytvoří:
 .
 ├─ .github/
 │  └─ workflows/
+├─ cache/
+│  └─ key_cache/
 ├─ docs/
 │  └─ img/
 ├─ icons/
-├─ logika sifer/
+├─ logika_sifer/
 ├─ README.md
 ├─ README_PRVNI_SPUSTENI.md
 ├─ README_PRVNI_SPUSTENI.txt
@@ -213,7 +237,7 @@ v0.0.1
 
 Další plánovaná vylepšení:
 
-- trvalá cache klíčů šifer,
+- další zrychlování generování klíčů šifer,
 - test všech šifer,
 - postupné rozdělení velkého `main.py`,
 - čistší registry šifer,

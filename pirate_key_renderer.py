@@ -18,7 +18,9 @@ from __future__ import annotations
 import base64
 import math
 import os
+import sys
 import tempfile
+import unicodedata
 from typing import Any, Iterable
 
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
@@ -35,6 +37,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QLabel,
 )
+
+try:
+    from app_paths import get_user_cache_dir
+except Exception:
+    get_user_cache_dir = None
 
 PARCHMENT = QColor("#f3dfad")
 PARCHMENT_LIGHT = QColor("#fff1c9")
@@ -278,12 +285,13 @@ class PirateKeyWidget(QWidget):
     def estimate_height(self, width: int) -> int:
         width = max(640, int(width or 1000))
         if self.key_type == "zlomky_key":
-            return 360
+            return 230 if self.print_mode else 360
         if self.key_type == "vlcacka_key":
-            return 560
+            return 430 if self.print_mode else 560
         cols = self.column_count(width)
         rows = max(1, math.ceil(len(self.items) / max(1, cols)))
-        return 168 + rows * self.cell_height(width) + 62
+        header_space = 40 if self.print_mode else 168
+        return header_space + rows * self.cell_height(width) + 62
 
     def column_count(self, width: int) -> int:
         forced = self.key_data.get("columns")
@@ -341,7 +349,8 @@ class PirateKeyWidget(QWidget):
             painter.setPen(QPen(GOLD, 2))
             painter.drawRoundedRect(outer.adjusted(8, 8, -8, -8), 12, 12)
 
-        self._draw_header(painter, outer)
+        if not self.print_mode:
+            self._draw_header(painter, outer)
         self._draw_grid(painter, outer)
 
     def _draw_header(self, painter: QPainter, outer: QRect) -> None:
@@ -380,11 +389,12 @@ class PirateKeyWidget(QWidget):
         if not self.items:
             painter.setPen(INK)
             painter.setFont(QFont("Georgia", 18, QFont.Bold))
-            painter.drawText(outer.adjusted(40, 170, -40, -40), Qt.AlignTop | Qt.AlignCenter, "Tato šifra zatím neposkytuje data klíče.")
+            top_offset = 40 if self.print_mode else 170
+            painter.drawText(outer.adjusted(40, top_offset, -40, -40), Qt.AlignTop | Qt.AlignCenter, "Tato šifra zatím neposkytuje data klíče.")
             return
 
         left = outer.left() + 34
-        top = outer.top() + 160
+        top = outer.top() + (30 if self.print_mode else 160)
         width = outer.width() - 68
         cols = self.column_count(width)
         cell_w = width / max(1, cols)
@@ -413,7 +423,7 @@ class PirateKeyWidget(QWidget):
         ]
 
         left = outer.left() + 42
-        top = outer.top() + 170
+        top = outer.top() + (34 if self.print_mode else 170)
         width = outer.width() - 84
 
         # Výšky řádků jsou pevně definované kvůli konzistentnímu vzhledu tabulky.
@@ -525,9 +535,9 @@ class PirateKeyWidget(QWidget):
             ]
 
         # Rozměry tabulky jsou centrované a přizpůsobené dostupnému prostoru.
-        top = outer.top() + 170
+        top = outer.top() + (34 if self.print_mode else 170)
         available_w = outer.width() - 120
-        available_h = outer.height() - 230
+        available_h = outer.height() - (94 if self.print_mode else 230)
         table_w = max(620, min(available_w, int(available_h * 1.65)))
         table_h = max(300, min(available_h, int(table_w * 0.52)))
         left = outer.center().x() - table_w // 2
@@ -1475,7 +1485,7 @@ def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, conte
 # Cache je navázaná na APP_VERSION. Když se po aktualizaci verze změní,
 # složka cache se automaticky promaže a klíče se vytvoří znovu.
 
-_PERSISTENT_KEY_CACHE_FORMAT = 1
+_PERSISTENT_KEY_CACHE_FORMAT = 5
 _PERSISTENT_KEY_CACHE_APP_VERSION = "0.0.0"
 _PERSISTENT_ORIGINAL_SAVE_KEY_PNG = save_key_png_for_module
 _PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE = preload_key_cache_for_module
@@ -1496,6 +1506,8 @@ def _persistent_debug(message: str) -> None:
 def _persistent_key_cache_root() -> str:
     """Vrátí systémovou cache složku pro klíče šifer."""
     try:
+        if get_user_cache_dir is not None:
+            return get_user_cache_dir("key_cache")
         import sys
         if sys.platform.startswith("win"):
             base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
@@ -1512,9 +1524,58 @@ def get_persistent_key_cache_dir() -> str:
     return _persistent_key_cache_root()
 
 
+def _bundled_key_cache_roots() -> list[str]:
+    """Vrátí read-only cache složky přibalené k aplikaci."""
+    candidates = []
+
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(module_dir, "cache", "key_cache"))
+
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(app_dir, "cache", "key_cache"))
+
+        bundle_dir = getattr(sys, "_MEIPASS", "")
+        if bundle_dir:
+            candidates.append(os.path.join(bundle_dir, "cache", "key_cache"))
+
+        if sys.platform == "darwin":
+            macos_dir = os.path.dirname(sys.executable)
+            contents_dir = os.path.dirname(macos_dir)
+            candidates.append(os.path.join(contents_dir, "Resources", "cache", "key_cache"))
+
+    unique = []
+    seen = set()
+    for path in candidates:
+        normalized = os.path.abspath(path)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+def get_bundled_key_cache_dir() -> str:
+    """Vrátí výchozí složku, kterou lze přibalit k aplikaci jako cache/key_cache."""
+    for path in _bundled_key_cache_roots():
+        if os.path.isdir(path):
+            return path
+    return _bundled_key_cache_roots()[0]
+
+
 def _persistent_safe_name(value: str) -> str:
-    safe = "".join(ch if ch.isalnum() else "_" for ch in str(value or "klic"))
-    safe = safe.strip("_") or "klic"
+    normalized = unicodedata.normalize("NFKD", str(value or "klic"))
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    parts = []
+    previous_separator = False
+    for ch in ascii_value:
+        if ch.isalnum():
+            parts.append(ch)
+            previous_separator = False
+        elif not previous_separator:
+            parts.append("_")
+            previous_separator = True
+    safe = "".join(parts).strip("_") or "klic"
     return safe[:80]
 
 
@@ -1532,12 +1593,11 @@ def _persistent_file_signature(path: str) -> dict[str, object]:
             stat = os.stat(path)
             return {
                 "name": os.path.basename(path),
-                "mtime": int(stat.st_mtime),
                 "size": int(stat.st_size),
             }
     except Exception:
         pass
-    return {"name": os.path.basename(path or ""), "mtime": 0, "size": 0}
+    return {"name": os.path.basename(path or ""), "size": 0}
 
 
 def _persistent_module_signature(module: Any) -> dict[str, object]:
@@ -1642,17 +1702,30 @@ def _persistent_key_payload(cipher_name: str, module: Any, context: dict[str, An
     }
 
 
-def _persistent_key_cache_path(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> str:
+def _persistent_key_cache_filename(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> str:
     import hashlib
     import json
 
-    root = _persistent_prepare_cache_dir()
     payload = _persistent_key_payload(cipher_name, module, context, width, print_mode)
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()[:24]
     suffix = "print" if print_mode else "ui"
     safe_name = _persistent_safe_name(cipher_name)
-    return os.path.join(root, f"{safe_name}_{suffix}_{int(width or 1500)}_{digest}.png")
+    return f"{safe_name}_{suffix}_{int(width or 1500)}_{digest}.png"
+
+
+def _persistent_key_cache_path(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> str:
+    root = _persistent_prepare_cache_dir()
+    return os.path.join(root, _persistent_key_cache_filename(cipher_name, module, context, width, print_mode))
+
+
+def _bundled_key_cache_path(cipher_name: str, module: Any, context: dict[str, Any] | None, width: int, print_mode: bool) -> str:
+    filename = _persistent_key_cache_filename(cipher_name, module, context, width, print_mode)
+    for root in _bundled_key_cache_roots():
+        path = os.path.join(root, filename)
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+    return ""
 
 
 def get_cached_key_png_path(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1500, print_mode: bool = False) -> str:
@@ -1660,6 +1733,9 @@ def get_cached_key_png_path(cipher_name: str, module: Any, context: dict[str, An
     try:
         path = _persistent_key_cache_path(cipher_name, module, context, width, print_mode)
         if path and os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+        path = _bundled_key_cache_path(cipher_name, module, context, width, print_mode)
+        if path:
             return path
     except Exception as error:
         _persistent_debug(f"Čtení cache selhalo: {type(error).__name__}: {error}")
@@ -1673,6 +1749,11 @@ def get_or_create_key_png_path(cipher_name: str, module: Any, context: dict[str,
         if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
             _persistent_debug(f"Použito z diskové cache: {os.path.basename(cache_path)}")
             return cache_path
+
+        bundled_path = _bundled_key_cache_path(cipher_name, module, context, width, print_mode)
+        if bundled_path:
+            _persistent_debug(f"Použito z přibalené cache: {os.path.basename(bundled_path)}")
+            return bundled_path
 
         _persistent_debug(f"Generuji nový klíč do diskové cache: {cipher_name}, print={print_mode}")
         ok = bool(_PERSISTENT_ORIGINAL_SAVE_KEY_PNG(cipher_name, module, cache_path, width=width, context=context, print_mode=print_mode))
@@ -1727,6 +1808,145 @@ def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[st
         return bool(_PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE(cipher_name, module, context=context, width=width))
     except Exception:
         return False
+
+
+def _clear_prebuild_key_cache_dir(root: str, progress_callback: Any | None = None) -> dict[str, int]:
+    """Smaže jen soubory vytvořené předgenerováním cache."""
+    stats = {"total": 0, "deleted": 0, "failed": 0}
+    try:
+        if not os.path.isdir(root):
+            if callable(progress_callback):
+                try:
+                    progress_callback(0, 0, "", "empty")
+                except Exception:
+                    pass
+            return stats
+
+        targets = []
+        for name in os.listdir(root):
+            path = os.path.join(root, name)
+            lower_name = name.lower()
+            is_cache_file = lower_name.endswith(".png") or lower_name == "cache_info.json"
+            if is_cache_file and os.path.isfile(path):
+                targets.append((name, path))
+
+        stats["total"] = len(targets)
+        if not targets and callable(progress_callback):
+            try:
+                progress_callback(0, 0, "", "empty")
+            except Exception:
+                pass
+
+        for index, (name, path) in enumerate(targets, start=1):
+            status = "deleted"
+            try:
+                os.remove(path)
+                stats["deleted"] += 1
+            except Exception as error:
+                status = "failed"
+                stats["failed"] += 1
+                _persistent_debug(f"Smazání staré cache selhalo pro {name}: {type(error).__name__}: {error}")
+            finally:
+                if callable(progress_callback):
+                    try:
+                        progress_callback(index, stats["total"], name, status)
+                    except Exception:
+                        pass
+    except Exception as error:
+        stats["failed"] += 1
+        _persistent_debug(f"Čištění přibalené cache selhalo: {type(error).__name__}: {error}")
+    return stats
+
+
+def prebuild_key_cache_to_dir(
+    items: Iterable[tuple[str, Any, dict[str, Any] | None]],
+    root: str | None = None,
+    width: int = 1400,
+    include_print: bool = True,
+    include_ui: bool = True,
+    progress_callback: Any | None = None,
+    clear_progress_callback: Any | None = None,
+    clear_existing: bool = False,
+) -> dict[str, int]:
+    """Vygeneruje přibalenou cache klíčů do složky cache/key_cache.
+
+    `items` obsahuje trojice (název šifry, modul logiky, kontext). Funkce záměrně
+    renderuje přímo do cílové složky a nepoužívá uživatelskou cache.
+    """
+    target_root = os.path.abspath(root or get_bundled_key_cache_dir())
+    os.makedirs(target_root, exist_ok=True)
+    clear_stats = _clear_prebuild_key_cache_dir(target_root, clear_progress_callback) if clear_existing else {"deleted": 0, "failed": 0}
+
+    modes: list[bool] = []
+    if include_ui:
+        modes.append(False)
+    if include_print:
+        modes.append(True)
+
+    item_list = list(items or [])
+    stats = {
+        "total": len(item_list) * len(modes),
+        "created": 0,
+        "skipped": 0,
+        "failed": 0,
+        "deleted": int(clear_stats.get("deleted", 0)),
+        "delete_failed": int(clear_stats.get("failed", 0)),
+    }
+    done = 0
+
+    for cipher_name, module, context in item_list:
+        if module is None:
+            continue
+        for print_mode in modes:
+            status = "failed"
+            try:
+                filename = _persistent_key_cache_filename(cipher_name, module, context, width, print_mode)
+                output_path = os.path.join(target_root, filename)
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    stats["skipped"] += 1
+                    status = "skipped"
+                    continue
+
+                ok = bool(
+                    _PERSISTENT_ORIGINAL_SAVE_KEY_PNG(
+                        cipher_name,
+                        module,
+                        output_path,
+                        width=width,
+                        context=context,
+                        print_mode=print_mode,
+                    )
+                )
+                if ok and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    stats["created"] += 1
+                    status = "created"
+                else:
+                    stats["failed"] += 1
+            except Exception as error:
+                stats["failed"] += 1
+                _persistent_debug(f"Předgenerování cache selhalo pro {cipher_name}: {type(error).__name__}: {error}")
+            finally:
+                done += 1
+                if callable(progress_callback):
+                    try:
+                        progress_callback(done, stats["total"], cipher_name, print_mode, status)
+                    except Exception:
+                        pass
+
+    try:
+        import json
+        info = {
+            "app_version": str(_PERSISTENT_KEY_CACHE_APP_VERSION),
+            "cache_format": int(_PERSISTENT_KEY_CACHE_FORMAT),
+            "width": int(width or 1400),
+            "items": dict(stats),
+        }
+        with open(os.path.join(target_root, "cache_info.json"), "w", encoding="utf-8") as file:
+            json.dump(info, file, ensure_ascii=False, indent=2)
+    except Exception as error:
+        _persistent_debug(f"Zápis cache_info.json selhal: {type(error).__name__}: {error}")
+
+    return stats
 
 
 class DiskCachedPirateKeyDialog(QDialog):

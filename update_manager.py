@@ -46,6 +46,19 @@ UPDATE_JSON_URL = "https://raw.githubusercontent.com/lukaskomarek30/sifry_na_tab
 
 ProgressCallback = Callable[[int, str], None]
 
+PRESERVED_USER_DATA_FILES = (
+    "historie_zprav.json",
+    "plan_tabor_sifer.json",
+    "poznamky_sifer.json",
+)
+PRESERVED_USER_DATA_DIRS = (
+    "history_images",
+    "planner_attachments",
+    "Sifrator_Mraveniste",
+    "user_data",
+    "sifrator_data",
+)
+
 
 class UpdateError(RuntimeError):
     pass
@@ -689,6 +702,8 @@ def _install_update_windows(zip_path: str, target_dir: str, run_file_name: str, 
     target_q = _ps_quote(target_dir)
     run_q = _ps_quote(run_path_after_update)
     backup_q = _ps_quote(backup_dir)
+    preserved_files_ps = "@(" + ", ".join(_ps_quote(item) for item in PRESERVED_USER_DATA_FILES) + ")"
+    preserved_dirs_ps = "@(" + ", ".join(_ps_quote(item) for item in PRESERVED_USER_DATA_DIRS) + ")"
 
     _emit_progress(progress_callback, 96, "Připravuji restart aplikace...")
 
@@ -700,6 +715,8 @@ $source = {source_q}
 $target = {target_q}
 $runFile = {run_q}
 $backup = {backup_q}
+$userDataFiles = {preserved_files_ps}
+$userDataDirs = {preserved_dirs_ps}
 
 $host.UI.RawUI.WindowTitle = "Šifrátor Mraveniště - instalace aktualizace"
 Write-Host "Instaluji aktualizaci Šifrátoru Mraveniště..."
@@ -726,6 +743,11 @@ Copy-Item -Path (Join-Path $target '*') -Destination $backup -Recurse -Force -Er
 
 Write-Progress -Activity "Aktualizace Šifrátoru" -Status "Kopíruji novou verzi..." -PercentComplete 50
 
+$excludedDirs = @()
+foreach ($dirName in $userDataDirs) {{
+    $excludedDirs += (Join-Path $target $dirName)
+}}
+
 $robocopyArgs = @(
     $source,
     $target,
@@ -738,11 +760,31 @@ $robocopyArgs = @(
     "/NJS"
 )
 
+if ($excludedDirs.Count -gt 0) {{
+    $robocopyArgs += "/XD"
+    $robocopyArgs += $excludedDirs
+}}
+
+if ($userDataFiles.Count -gt 0) {{
+    $robocopyArgs += "/XF"
+    $robocopyArgs += $userDataFiles
+}}
+
 & robocopy @robocopyArgs
 $robocopyCode = $LASTEXITCODE
 
 if ($robocopyCode -ge 8) {{
     throw "Robocopy aktualizace selhala. Kód: $robocopyCode"
+}}
+
+Write-Progress -Activity "Aktualizace Šifrátoru" -Status "Kontroluji uživatelská data..." -PercentComplete 82
+$userDataItems = @($userDataFiles + $userDataDirs)
+foreach ($itemName in $userDataItems) {{
+    $backupItem = Join-Path $backup $itemName
+    $targetItem = Join-Path $target $itemName
+    if ((Test-Path $backupItem) -and !(Test-Path $targetItem)) {{
+        Copy-Item -Path $backupItem -Destination $targetItem -Recurse -Force -ErrorAction SilentlyContinue
+    }}
 }}
 
 Write-Progress -Activity "Aktualizace Šifrátoru" -Status "Spouštím novou verzi..." -PercentComplete 95
@@ -827,6 +869,7 @@ def _install_update_macos(zip_path: str, target_path: str, progress_callback: Pr
     target_q = _sh_quote(target_path)
     backup_q = _sh_quote(backup_path)
     log_q = _sh_quote(install_log)
+    preserved_items_sh = " ".join(_sh_quote(item) for item in (PRESERVED_USER_DATA_FILES + PRESERVED_USER_DATA_DIRS))
 
     _emit_progress(progress_callback, 96, "Připravuji automatickou instalaci...")
     _debug_log(f"macOS payload: {payload_path}")
@@ -913,6 +956,22 @@ if [ "$DITTO_CODE" -ne 0 ]; then
     fi
     exit 13
 fi
+
+echo "Obnovuji pripadna legacy uzivatelska data..."
+OLD_TARGET="$BACKUP/$(basename "$TARGET")"
+OLD_DATA_BASE="$OLD_TARGET"
+NEW_DATA_BASE="$TARGET"
+if [ -d "$OLD_TARGET/Contents/MacOS" ] && [ -d "$TARGET/Contents/MacOS" ]; then
+    OLD_DATA_BASE="$OLD_TARGET/Contents/MacOS"
+    NEW_DATA_BASE="$TARGET/Contents/MacOS"
+fi
+
+for ITEM in {preserved_items_sh}; do
+    if [ -e "$OLD_DATA_BASE/$ITEM" ] && [ ! -e "$NEW_DATA_BASE/$ITEM" ]; then
+        echo "Obnovuji $ITEM"
+        /usr/bin/ditto "$OLD_DATA_BASE/$ITEM" "$NEW_DATA_BASE/$ITEM" || echo "VAROVANI: $ITEM se nepodarilo obnovit"
+    fi
+done
 
 echo "Nastavuji opravneni..."
 chmod -R u+rwX "$TARGET" || true
