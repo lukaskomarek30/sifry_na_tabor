@@ -217,6 +217,13 @@ jobs:
         shell: bash
         run: |
           test -f main.py
+          test -f groups.py
+          test -f groups_data.py
+          test -f diploma.py
+          test -f diploma_print.py
+          test -f vendor/xlrd/__init__.py
+          test -f icons/documents/daily_a.png
+          test -f icons/documents/meal_a.png
           test -f pirate_key_renderer.py
           test -f update_manager.py
           test -d icons
@@ -243,6 +250,10 @@ jobs:
       - name: Smoke test přímo ze zdrojáků
         shell: bash
         run: python main.py --smoke-test
+
+      - name: Testy sportovního dne a oddílů
+        shell: bash
+        run: python -m unittest -v test_sports_day_logic.py test_groups_data.py test_groups_ui.py test_diploma_print.py
 
       - name: Předgenerovat cache klíčů
         shell: bash
@@ -327,6 +338,10 @@ jobs:
           cmd += [
               '--hidden-import', 'pirate_key_renderer',
               '--hidden-import', 'update_manager',
+              '--hidden-import', 'openpyxl',
+              '--hidden-import', 'xlrd',
+              '--hidden-import', 'vendor.xlrd',
+              '--collect-submodules', 'vendor.xlrd',
               '--add-data', f'icons{sep}icons',
               '--add-data', f'cache{sep}cache',
               '--add-data', f'logika_sifer{sep}logika_sifer',
