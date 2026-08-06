@@ -1,5 +1,7 @@
-# Build a runtime knihovny pro Šifrátor Mraveniště
+# Build a runtime knihovny pro Šifrátor Mraveniště v0.0.4
 # Python pro GitHub Actions build: 3.11
 pyinstaller>=6.11,<7
 PySide6>=6.8,<7
 Pillow>=10,<13
+openpyxl>=3.1,<4
+xlrd>=2.0,<3

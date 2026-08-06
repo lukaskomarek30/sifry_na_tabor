@@ -13,7 +13,7 @@ Podporované platformy:
 
 Preferovaný formát update.json:
 {
-  "version": "0.0.3",
+  "version": "0.0.4",
   "notes": "...",
   "platforms": {
     "windows-x64": {"package_url": "...", "sha256": "..."},

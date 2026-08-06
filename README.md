@@ -1,8 +1,8 @@
 # Šifrátor Mraveniště
 
-Desktopová aplikace pro šifrování a dešifrování textů vytvořená pro **Letní tábor Mraveniště**.
+Desktopová táborová aplikace vytvořená pro **Letní tábor Mraveniště**. Verze **v0.0.4** spojuje šifrátor, plánovač, oddíly, sportovní den, diplomy a tiskové nástroje do jednoho moderního pirátského rozhraní.
 
-Aplikace má pirátské grafické rozhraní, podporuje více druhů šifer, umí zobrazovat klíče šifer, tisknout výstupy a automaticky se aktualizovat na Windows i macOS.
+Aplikace podporuje více druhů šifer, generuje pirátské klíče, eviduje výsledky sportovního dne, připravuje diplomy a tiskové listiny a automaticky se aktualizuje na Windows i macOS.
 
 ---
 
@@ -34,12 +34,33 @@ Po stažení ZIP rozbal a spusť aplikaci.
 
 ## Hlavní funkce
 
-- výběr šifry ze seznamu,
-- šifrování a dešifrování tajné zprávy,
-- grafické zobrazení výsledku u vybraných šifer,
-- kopírování výsledku,
-- zobrazení klíče šifry,
-- tisk textu i klíče,
+- moderní hlavní menu s animovanými přechody a vlastními pirátskými pozadími,
+- šifrování a dešifrování tajných zpráv,
+- grafické zobrazení výsledků a pirátsky stylizované klíče šifer,
+- čistý tisk šifrovacích klíčů bez dekorací a pozadí,
+- plánovač táborového programu,
+- hromadné šifrování, přehled šifer a historie zpráv,
+- oddíly s dynamickým importem starších `.xls` i nových `.xlsx` souborů; čtečka starého XLS je přibalená přímo v aplikaci,
+- opakovaný import stejného nebo změněného seznamu oddílů bezpečně sloučí změny, zachová ručně doplněné údaje a nevytváří duplicity,
+- průhledné dlaždice oddílů s vedoucími, počtem dětí a věkovým průměrem,
+- vyhledávání dětí i vedoucích s našeptáváním a upravitelnými osobními kartami,
+- vlastní údaje osob (například telefon) a export všech nebo jednotlivých oddílů do Excelu,
+- propojení jmen z oddílů s našeptáváním nového soutěžícího ve Sportovním dni,
+- sportovní den s výzvami, věkovými kategoriemi, posádkou, výsledky a pokladem,
+- sdílená pořadí při remíze a volitelná normalizace bodů s nastavitelným maximem,
+- ochrana proti duplicitním názvům výzev, kategorií a jmen pirátů ve stejné kategorii,
+- řazení výsledků a pokladu s animovaným bublinkovým efektem,
+- tisk výsledků sportovního dne na různé formáty papíru,
+- A6 kartičky výzev, čtyři stejné kartičky na jednom A4,
+- diplomy za tábor a sportovní den v několika grafických variantách včetně světlého olympijského motivu,
+- nové tiskoviny: diplom za úklid, denní program a jídelníček, vždy ve dvou grafických variantách,
+- společný tiskový editor s pohyblivými průhlednými textovými poli, vlastní barvou písma, přidáváním dalších textů a změnou písma, velikosti, tučnosti, kurzívy, podtržení, přeškrtnutí, zarovnání i natočení,
+- pokročilé typografické volby diplomů: rozestupy a šířka znaků, průhlednost, stín, změna velikosti písmen, svislé zarovnání a pořadí vrstev,
+- přehledný široký editor diplomů bez vodorovného posouvání a ořezaných názvů voleb,
+- přibalené pirátské písmo Pirata One s českou diakritikou a rychlým tlačítkem v editoru diplomů,
+- A4 tabulka hodnocení úklidu třinácti chatek, ve které lze přesouvat a formátovat i nadpisy, data a názvy chatek,
+- volitelný šetrný tisk, pirátské pozadí a zobrazení loga,
+- živý náhled, ukládání do PDF a fyzický tisk,
 - automatická kontrola aktualizací,
 - ruční kontrola aktualizací,
 - logovací okno,
@@ -132,7 +153,7 @@ Uživatelská data se neukládají do instalační složky aplikace, ale do prof
 - macOS: `~/Library/Application Support/Sifrator_Mraveniste`
 - Linux: `$XDG_DATA_HOME/Sifrator_Mraveniste` nebo `~/.local/share/Sifrator_Mraveniste`
 
-Do této složky patří historie zpráv, plán tábora, poznámky k šifrám, obrázky historie a lokálně vložené přílohy plánovače. Aktualizace programu proto může přepsat programové soubory, aniž by smazala uživatelský plán nebo poznámky.
+Do této složky patří historie zpráv, plán tábora, importované a ručně upravené údaje oddílů, data sportovního dne, výsledky posádky, poznámky k šifrám, obrázky historie a lokálně vložené přílohy plánovače. Aktualizace programu proto může přepsat programové soubory, aniž by smazala uživatelský plán, oddíly, výsledky nebo poznámky.
 
 ---
 
@@ -200,6 +221,12 @@ Workflow vytvoří:
 - `SHA256SUMS.txt`,
 - GitHub Release poznámky.
 
+`update.json` a `SHA256SUMS.txt` v hlavní větvi vždy popisují poslední skutečně vydané balíčky. Před spuštěním release proto mohou ještě ukazovat starší veřejnou verzi; workflow je po úspěšném sestavení v0.0.4 samo aktualizuje a commitne.
+
+Podrobný seznam změn je v souboru [`CHANGELOG.md`](CHANGELOG.md).
+
+Přesný seznam souborů a postup publikace této aktualizace je v [`GIT_UPLOAD_V0.0.4.md`](GIT_UPLOAD_V0.0.4.md).
+
 ---
 
 ## Struktura projektu
@@ -213,7 +240,22 @@ Workflow vytvoří:
 ├─ docs/
 │  └─ img/
 ├─ icons/
+│  ├─ diplomas/
+│  ├─ documents/
+│  ├─ fonts/
+│  └─ print_backgrounds/
 ├─ logika_sifer/
+├─ tools/
+│  └─ build_sports_print_backgrounds.py
+├─ vendor/
+│  └─ xlrd/
+├─ CHANGELOG.md
+├─ diploma.py
+├─ diploma_print.py
+├─ fire_effects.py
+├─ groups.py
+├─ groups_data.py
+├─ home_menu.py
 ├─ README.md
 ├─ README_PRVNI_SPUSTENI.md
 ├─ README_PRVNI_SPUSTENI.txt
@@ -221,27 +263,34 @@ Workflow vytvoří:
 ├─ main.py
 ├─ pirate_key_renderer.py
 ├─ requirements.txt
+├─ sports_day.py
+├─ sports_day_print.py
+├─ test_sports_day_logic.py
+├─ test_groups_data.py
+├─ test_groups_ui.py
+├─ test_diploma_print.py
+├─ THIRD_PARTY_NOTICES.md
 ├─ update.json
 └─ update_manager.py
 ```
 
 ---
 
-## Stav projektu
-
-První stabilní verze:
+## Aktuální verze zdrojového kódu
 
 ```text
-v0.0.1
+v0.0.4
 ```
 
-Další plánovaná vylepšení:
+Hlavní změny v0.0.4:
 
-- další zrychlování generování klíčů šifer,
-- test všech šifer,
-- postupné rozdělení velkého `main.py`,
-- čistší registry šifer,
-- lepší interní struktura projektu.
+- vestavěná podpora `.xls` bez nutnosti doinstalovávat knihovnu na starší instalaci,
+- slučovací import oddílů bez duplikátů a bez ztráty ručních údajů,
+- čtvrtá varianta diplomu za sportovní den podle světlého olympijského motivu,
+- nové tiskoviny denního programu, diplomu za úklid a jídelníčku,
+- dvě pirátské varianty a šetrný tisk každé nové tiskoviny,
+- společný pohyblivý textový editor ve všech tiskovinách sekce Diplomy včetně hodnocení úklidu,
+- nové automatické testy importu a tiskového studia.
 
 ---
 

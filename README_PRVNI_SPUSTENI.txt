@@ -1,4 +1,4 @@
-Šifrátor Mraveniště – první spuštění
+Šifrátor Mraveniště v0.0.4 – první spuštění
 
 Tento soubor je textová verze návodu. Obrázková verze je v souboru:
 README_PRVNI_SPUSTENI.md
@@ -8,13 +8,13 @@ README_PRVNI_SPUSTENI.md
 ============================================================
 
 Windows 10/11 64-bit:
-Sifrator_Mraveniste_windows-x64_vX.X.X.zip
+Sifrator_Mraveniste_windows-x64_v0.0.4.zip
 
 Mac Apple Silicon / Apple A18 Pro / M1 / M2 / M3 / M4:
-Sifrator_Mraveniste_macos-arm64_vX.X.X.zip
+Sifrator_Mraveniste_macos-arm64_v0.0.4.zip
 
 Mac Intel:
-Sifrator_Mraveniste_macos-x64_vX.X.X.zip
+Sifrator_Mraveniste_macos-x64_v0.0.4.zip
 
 Na Macu zjistíš typ procesoru v Terminálu:
 
@@ -22,6 +22,43 @@ uname -m
 
 arm64  = stáhni macos-arm64
 x86_64 = stáhni macos-x64
+
+
+============================================================
+CO NAJDEŠ VE VERZI 0.0.4
+============================================================
+
+Po spuštění se otevře Velitelská paluba. Z ní vstoupíš do šifrátoru,
+plánovače, hromadného šifrování, přehledu šifer, historie zpráv,
+oddílů, sportovního dne a tiskového studia diplomů.
+
+V dlaždici ODDÍLY klikni na IMPORTOVAT EXCEL a vyber stejně
+strukturovaný soubor .xls nebo .xlsx. Každý list se načte jako jeden
+oddíl a počty oddílů, dětí i vedoucích mohou být libovolné. Podpora
+starého XLS je přibalená v aplikaci. Opakovaný import provede jen změny,
+nevytvoří stejné osoby podruhé a zachová ručně doplněné údaje. Kliknutím
+na osobu otevřeš její kartu, kde lze měnit všechny údaje nebo přidat
+vlastní položku, například telefon. Oddíly lze exportovat společně i
+jednotlivě. Jména z oddílů se nabízejí ve Sportovním dni.
+
+Sportovní den ukládá posádku, výzvy a výsledky automaticky. V sekci
+DIPLOM jsou diplomy za tábor, sportovní den a úklid, hodnocení úklidu,
+denní program i jídelníček. Vše lze upravit v živém náhledu, uložit do
+PDF a vytisknout s pirátským pozadím nebo šetrně.
+
+V editoru libovolné tiskoviny klikni na text přímo v náhledu a tažením ho přesuň.
+Úchytem v pravém dolním rohu změníš velikost pole. V levém panelu lze
+měnit text, styl a velikost písma, tučnost, kurzívu, podtržení,
+zarovnání a natočení nebo přidat další text. Stejně lze upravovat i texty
+v hodnocení úklidu. Tyrkysový rámeček se netiskne.
+
+Pokročilé volby nabízí vlastní barvu písma, přeškrtnutí, svislé
+zarovnání, velká a malá písmena, mezery a šířku znaků, průhlednost,
+jemný stín a pořadí překrývajících se textů. AUTOMATICKÁ vrátí barvu
+podle pozadí. Textová pole nemají žádné tisknutelné pozadí.
+
+Tlačítko POUŽÍT PIRÁTSKÉ PÍSMO – PIRATA ONE nastaví na vybraný text
+přibalený pirátský font. Podporuje českou diakritiku a nemusí se instalovat.
 
 
 ============================================================
@@ -114,6 +151,9 @@ AKTUALIZACE APLIKACE
 ============================================================
 
 Aplikace při startu kontroluje novou verzi podle update.json na GitHubu.
+
+Aktualizace zachová plán tábora, historii, poznámky, importované oddíly
+i uložená data sportovního dne.
 
 Na macOS doporučuji mít aplikaci ve složce:
 /Applications/Sifrator_Mraveniste.app

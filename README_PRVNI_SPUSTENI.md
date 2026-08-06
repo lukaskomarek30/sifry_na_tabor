@@ -1,6 +1,6 @@
 # Šifrátor Mraveniště – první spuštění
 
-Tento návod slouží pro první spuštění aplikace **Sifrator_Mraveniste** na Windows a macOS.
+Tento návod slouží pro první spuštění aplikace **Sifrator_Mraveniste v0.0.4** na Windows a macOS.
 
 ---
 
@@ -10,9 +10,9 @@ Na GitHub Releases stáhni správný ZIP podle systému:
 
 | Systém | Soubor |
 |---|---|
-| Windows 10/11 64-bit | `Sifrator_Mraveniste_windows-x64_vX.X.X.zip` |
-| Mac s Apple Silicon / Apple A18 Pro / M1 / M2 / M3 / M4 | `Sifrator_Mraveniste_macos-arm64_vX.X.X.zip` |
-| Mac s procesorem Intel | `Sifrator_Mraveniste_macos-x64_vX.X.X.zip` |
+| Windows 10/11 64-bit | `Sifrator_Mraveniste_windows-x64_v0.0.4.zip` |
+| Mac s Apple Silicon / Apple A18 Pro / M1 / M2 / M3 / M4 | `Sifrator_Mraveniste_macos-arm64_v0.0.4.zip` |
+| Mac s procesorem Intel | `Sifrator_Mraveniste_macos-x64_v0.0.4.zip` |
 
 Na Macu zjistíš typ procesoru v Terminálu příkazem:
 
@@ -26,6 +26,20 @@ Výsledek:
 arm64  = stáhni macos-arm64
 x86_64 = stáhni macos-x64
 ```
+
+## Co najdeš ve v0.0.4
+
+Po spuštění se otevře **Velitelská paluba**, ze které vstoupíš do šifrátoru, plánovače, hromadného šifrování, přehledu šifer, historie zpráv, oddílů, sportovního dne a tiskového studia diplomů.
+
+V dlaždici **Oddíly** klikni na **IMPORTOVAT EXCEL** a vyber stejně strukturovaný `.xls` nebo `.xlsx`. Každý list se načte jako jeden oddíl; počty oddílů, dětí i vedoucích mohou být libovolné. Podpora starého `.xls` je přibalená přímo v aplikaci. Při opakovaném importu se provedou jen změny, stejné osoby se nezdvojí a ručně přidané údaje zůstanou zachované. Kliknutím na osobu otevřeš její kartu, kde lze změnit všechny údaje nebo přidat vlastní položku, například telefon. Oddíly lze exportovat společně i jednotlivě a jejich jména se nabízejí při přidávání soutěžícího ve Sportovním dni.
+
+Sportovní den ukládá posádku, výzvy a výsledky automaticky. V sekci **Diplom** najdeš diplom za tábor, diplom za sportovní den, diplom za úklid, hodnocení úklidu chatek, denní program a jídelníček. Všechny tyto tiskoviny lze před tiskem upravit v živém náhledu, uložit do PDF a vytisknout s pirátským pozadím nebo v šetrné variantě.
+
+V editoru libovolné tiskoviny klikni na text přímo v náhledu. Tažením ho přesuneš a úchytem v pravém dolním rohu změníš velikost pole. V levém panelu lze upravit obsah, styl a velikost písma, tučnost, kurzívu, podtržení, zarovnání i natočení nebo přidat další textové pole. Stejné ovládání funguje také u nadpisů, dat a názvů chatek v hodnocení úklidu. Pomocný tyrkysový rámeček se netiskne.
+
+Pokročilé volby umožňují nastavit barvu písma, přeškrtnutí, svislé zarovnání, velká či malá písmena, mezery a šířku znaků, průhlednost, jemný stín a pořadí překrývajících se textů. Volba **AUTOMATICKÁ** vrátí kontrastní barvu odpovídající pozadí. Textová pole nemají žádné tisknutelné pozadí.
+
+Tlačítko **POUŽÍT PIRÁTSKÉ PÍSMO — PIRATA ONE** nastaví na vybraný text přibalený pirátský font. Funguje i s českou diakritikou a není nutné jej instalovat do systému.
 
 ---
 
@@ -161,7 +175,7 @@ Lepší je ale aplikaci přesunout do **Applications / Aplikace**.
 
 Aplikace při startu kontroluje novou verzi podle souboru `update.json` na GitHubu.
 
-Pokud je dostupná nová verze, zobrazí se okno s nabídkou aktualizace.
+Pokud je dostupná nová verze, zobrazí se okno s nabídkou aktualizace. Aktualizace zachová plán tábora, historii, poznámky, importované oddíly i uložená data sportovního dne.
 
 Na macOS doporučuji mít aplikaci ve složce:
 
@@ -223,6 +237,7 @@ Zkontroluj:
 4. Na Macu je ideálně přesunutá do složky `/Applications`.
 5. Na Macu jsi povolil spuštění v **Privacy & Security**.
 6. Pokud je potřeba, odstranil jsi quarantine atribut přes `xattr`.
+7. V titulku aplikace je uvedena očekávaná verze `v0.0.4`.
 
 ---
 
