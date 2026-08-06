@@ -49,6 +49,7 @@ from app_paths import (
     _hash_unicode_component,
 )
 from cipher_registry import get_cipher_logic, get_cipher_widget_class, get_pirate_key_renderer
+from fire_effects import FireFlicker
 from ui_widgets import Colors, CipherItem, CipherButton, TransparentActionButton
 
 BASE_W = 1672
@@ -70,6 +71,7 @@ class SifratorSkinWidget(QWidget):
 
         self.skin_pixmap = QPixmap(self.skin_path) if self.skin_path else QPixmap()
         self.logo_pixmap = self.load_logo_pixmap(self.logo_path) if self.logo_path else QPixmap()
+        self.fire_flicker = FireFlicker(self, ((0.947, 0.842, 1.25),))
 
         self.ciphers = self.build_cipher_list()
         # Aplikace startuje bez předvybrané šifry.
@@ -4818,6 +4820,7 @@ class SifratorSkinWidget(QWidget):
                 Qt.SmoothTransformation,
             )
             painter.drawPixmap(0, 0, scaled)
+            self.fire_flicker.paint(painter, scaled.width(), scaled.height())
         else:
             painter.fillRect(self.rect(), QColor("#06131b"))
 

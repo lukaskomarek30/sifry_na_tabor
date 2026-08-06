@@ -24,7 +24,7 @@ import unicodedata
 from typing import Any, Iterable
 
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QImage
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPen, QPixmap, QImage
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -39,8 +39,9 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from app_paths import get_user_cache_dir
+    from app_paths import get_icons_dir, get_user_cache_dir
 except Exception:
+    get_icons_dir = None
     get_user_cache_dir = None
 
 PARCHMENT = QColor("#f3dfad")
@@ -50,9 +51,117 @@ GOLD = QColor("#b88738")
 BORDER = QColor("#2b1b0c")
 BLACK = QColor("#111111")
 WHITE = QColor("#fffdf5")
+PRINT_WHITE = QColor("#ffffff")
 GRID = QColor("#3a2a18")
 MUTED = QColor("#2b1b0c")
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+CIPHER_LOGO_FILES = {
+    "Binární čtverce": "binarni_ctverce.png",
+    "Brailovo písmo": "brailovo_pismo.png",
+    "Britská vlajka": "britska_vlajka.png",
+    "Caesarova šifra": "caesarova_sifra.png",
+    "Čtverec": "ctverec.png",
+    "Hebrejský kříž": "hebrejsky_kriz.png",
+    "Malý polský kříž": "maly_polsky_kriz.png",
+    "Mobil": "mobil.png",
+    "Moonovo písmo": "moonovo_pismo.png",
+    "Náhodná lehká šifra": "compass.png",
+    "Morseova abeceda": "morseova_abeceda.png",
+    "Morseova abeceda – hory": "morseova_hory.png",
+    "Morseova abeceda – pila": "morseova_pila.png",
+    "Morseova abeceda – stromy": "morseova_stromy.png",
+    "Mříž": "mriz.png",
+    "Okno": "okno.png",
+    "Pavoučí síť": "pavouci_sit.png",
+    "Posunková abeceda": "posunkova_abeceda.png",
+    "Pseudo-Čína": "pseudo_cina.png",
+    "Semafor": "semafor.png",
+    "SuperKrychle": "superkrychle.png",
+    "Tančící figurky": "tancici_figurky.png",
+    "Tančící figurky II": "tancici_figurky_2.png",
+    "Velký polský kříž": "velky_polsky_kriz.png",
+    "Velký polský kříž (26 znaků)": "velky_polsky_kriz_26.png",
+    "Vlčácká šifra": "vlcacka_sifra.png",
+    "Záměna písmen (A=Z)": "zamena_pismen_a_z.png",
+    "Záměna písmen za čísla (A=01, Z=26)": "zamena_cisla_a01_z26.png",
+    "Záměna písmen za čísla (A=26, Z=01)": "zamena_cisla_a26_z01.png",
+    "Zednářská šifra": "zednarska_sifra.png",
+    "Zlomky": "zlomky.png",
+}
+
+
+def _cipher_logo_path(cipher_name: str) -> str:
+    filename = CIPHER_LOGO_FILES.get(str(cipher_name or "").strip(), "")
+    if not filename:
+        return ""
+
+    roots = []
+    if callable(get_icons_dir):
+        try:
+            roots.append(get_icons_dir())
+        except Exception:
+            pass
+    roots.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons"))
+
+    for root in roots:
+        path = os.path.join(root, filename)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
+def _key_template_path(data: dict[str, Any]) -> str:
+    graphical_types = {"binary_squares", "braille", "image_map", "visual_widget"}
+    key_type = str(data.get("type", "generic"))
+    filename = (
+        "pirate_key_zednarska_template.png"
+        if key_type in graphical_types
+        else "pirate_key_morse_template.png"
+    )
+
+    roots = []
+    if callable(get_icons_dir):
+        try:
+            roots.append(get_icons_dir())
+        except Exception:
+            pass
+    roots.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons"))
+
+    for root in roots:
+        path = os.path.join(root, "key_templates", filename)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
+def _brand_key_data(cipher_name: str, data: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return data
+    branded = dict(data)
+    branded.setdefault("cipher_name", str(cipher_name or ""))
+    logo_path = _cipher_logo_path(cipher_name)
+    if logo_path:
+        branded.setdefault("logo_path", logo_path)
+    background_path = _key_template_path(branded)
+    if background_path:
+        branded.setdefault("theme", "pirate_modern")
+        branded.setdefault("background_path", background_path)
+    return branded
+
+
+def _ensure_pirate_fonts() -> None:
+    """Připojí lokální řezy Georgie i při vykreslování bez obrazovky."""
+    if getattr(_ensure_pirate_fonts, "_done", False):
+        return
+    _ensure_pirate_fonts._done = True
+
+    if sys.platform.startswith("win"):
+        font_root = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+        for filename in ("georgia.ttf", "georgiab.ttf", "arial.ttf", "arialbd.ttf"):
+            path = os.path.join(font_root, filename)
+            if os.path.exists(path):
+                QFontDatabase.addApplicationFont(path)
 
 
 # ============================================================
@@ -269,10 +378,24 @@ def _generic_data(cipher_name: str, mapping: dict[Any, Any], description: str = 
 class PirateKeyWidget(QWidget):
     def __init__(self, key_data: dict[str, Any], parent: QWidget | None = None):
         super().__init__(parent)
+        _ensure_pirate_fonts()
         self.key_data = key_data or {}
         self.items = _normalize_items(self.key_data.get("items", []))
         self.key_type = str(self.key_data.get("type", "generic"))
         self.print_mode = bool(self.key_data.get("print_mode") or self.key_data.get("_print_mode"))
+        self.modern_pirate_theme = str(self.key_data.get("theme", "")).strip().lower() == "pirate_modern"
+        self.background_path = str(self.key_data.get("background_path", ""))
+        self.background_pixmap = QPixmap(self.background_path) if self.background_path else QPixmap()
+        # Pirátská scéna patří pouze do obrazovkového náhledu klíče.
+        # Tiskový režim zůstává úsporný: čistě bílý podklad bez dekorací a loga.
+        self.decorated_pirate_mode = (
+            self.modern_pirate_theme
+            and not self.background_pixmap.isNull()
+            and not self.print_mode
+        )
+        self.plain_print_mode = self.print_mode
+        self.logo_path = str(self.key_data.get("logo_path", ""))
+        self.logo_pixmap = QPixmap(self.logo_path) if self.logo_path else QPixmap()
         self.widget_class = self.key_data.get("widget_class")
         self._glyph_cache: dict[tuple[str, int, int], QPixmap] = {}
         self.setMinimumWidth(720)
@@ -285,13 +408,17 @@ class PirateKeyWidget(QWidget):
     def estimate_height(self, width: int) -> int:
         width = max(640, int(width or 1000))
         if self.key_type == "zlomky_key":
-            return 230 if self.print_mode else 360
-        if self.key_type == "vlcacka_key":
-            return 430 if self.print_mode else 560
-        cols = self.column_count(width)
-        rows = max(1, math.ceil(len(self.items) / max(1, cols)))
-        header_space = 40 if self.print_mode else 168
-        return header_space + rows * self.cell_height(width) + 62
+            height = 230 if self.plain_print_mode else 360
+        elif self.key_type == "vlcacka_key":
+            height = 430 if self.plain_print_mode else 560
+        else:
+            cols = self.column_count(width)
+            rows = max(1, math.ceil(len(self.items) / max(1, cols)))
+            header_space = 40 if self.plain_print_mode else 168
+            height = header_space + rows * self.cell_height(width) + 62
+        if self.decorated_pirate_mode:
+            height = max(height, int(width * 0.82))
+        return height
 
     def column_count(self, width: int) -> int:
         forced = self.key_data.get("columns")
@@ -330,11 +457,34 @@ class PirateKeyWidget(QWidget):
 
         rect = self.rect()
 
-        if self.print_mode:
+        if self.plain_print_mode:
             # Tiskový režim používá čisté bílé pozadí bez dekorativních prvků.
             # Výstup je optimalizovaný pro černobílý tisk.
-            painter.fillRect(rect, WHITE)
+            painter.fillRect(rect, PRINT_WHITE)
             outer = rect.adjusted(12, 12, -12, -12)
+        elif self.decorated_pirate_mode:
+            painter.fillRect(rect, QColor("#07151d"))
+            source = QRect(0, 0, self.background_pixmap.width(), self.background_pixmap.height())
+            target_ratio = rect.width() / max(1, rect.height())
+            source_ratio = source.width() / max(1, source.height())
+            if source_ratio > target_ratio:
+                source_width = int(source.height() * target_ratio)
+                source.setLeft((source.width() - source_width) // 2)
+                source.setWidth(source_width)
+            elif source_ratio < target_ratio:
+                source_height = int(source.width() / target_ratio)
+                source.setTop((source.height() - source_height) // 2)
+                source.setHeight(source_height)
+            painter.drawPixmap(rect, self.background_pixmap, source)
+
+            inset_x = max(70, int(rect.width() * 0.085))
+            inset_top = max(48, int(rect.height() * 0.055))
+            inset_bottom = max(54, int(rect.height() * 0.06))
+            outer = rect.adjusted(inset_x, inset_top, -inset_x, -inset_bottom)
+
+            painter.setPen(QPen(QColor(210, 165, 72, 205), 2))
+            painter.setBrush(QColor(247, 226, 173, 28))
+            painter.drawRoundedRect(outer, 16, 16)
         else:
             painter.fillRect(rect, PARCHMENT)
             painter.setPen(Qt.NoPen)
@@ -349,7 +499,7 @@ class PirateKeyWidget(QWidget):
             painter.setPen(QPen(GOLD, 2))
             painter.drawRoundedRect(outer.adjusted(8, 8, -8, -8), 12, 12)
 
-        if not self.print_mode:
+        if not self.plain_print_mode:
             self._draw_header(painter, outer)
         self._draw_grid(painter, outer)
 
@@ -358,24 +508,53 @@ class PirateKeyWidget(QWidget):
         subtitle = str(self.key_data.get("subtitle", "Šifrátor Mraveniště – pirátský klíč"))
         description = str(self.key_data.get("description", ""))
 
-        title_rect = QRect(outer.left() + 28, outer.top() + 14, outer.width() - 56, 42)
-        subtitle_rect = QRect(outer.left() + 28, outer.top() + 56, outer.width() - 56, 28)
-        desc_rect = QRect(outer.left() + 44, outer.top() + 90, outer.width() - 88, 44)
+        if self.modern_pirate_theme:
+            banner = QRect(outer.left() + 66, outer.top() + 5, outer.width() - 132, 132)
+            painter.setPen(QPen(QColor(205, 157, 61, 225), 2))
+            painter.setBrush(QColor(5, 24, 33, 222))
+            painter.drawRoundedRect(banner, 20, 20)
+            painter.setPen(QPen(QColor(255, 225, 151, 55), 1))
+            painter.drawRoundedRect(banner.adjusted(8, 8, -8, -8), 14, 14)
 
-        painter.setPen(INK)
+        logo_reserve = 116 if not self.logo_pixmap.isNull() else 0
+        title_rect = QRect(outer.left() + 28 + logo_reserve, outer.top() + 14, outer.width() - 56 - logo_reserve * 2, 42)
+        subtitle_rect = QRect(outer.left() + 28 + logo_reserve, outer.top() + 56, outer.width() - 56 - logo_reserve * 2, 28)
+        desc_rect = QRect(outer.left() + 44 + logo_reserve, outer.top() + 90, outer.width() - 88 - logo_reserve * 2, 44)
+
+        if not self.logo_pixmap.isNull():
+            logo_size = 96 if self.modern_pirate_theme else 82
+            logo = self.logo_pixmap.scaled(logo_size, logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_center_x = outer.left() + (126 if self.modern_pirate_theme else 88)
+            logo_center_y = outer.top() + 70
+            glow_size = logo_size + 12
+            painter.setPen(QPen(QColor(223, 177, 80, 190), 2))
+            painter.setBrush(QColor(4, 22, 30, 190) if self.modern_pirate_theme else QColor(255, 241, 201, 135))
+            painter.drawEllipse(
+                logo_center_x - glow_size // 2,
+                logo_center_y - glow_size // 2,
+                glow_size,
+                glow_size,
+            )
+            painter.drawPixmap(
+                logo_center_x - logo.width() // 2,
+                logo_center_y - logo.height() // 2,
+                logo,
+            )
+
+        painter.setPen(QColor("#f6d98d") if self.modern_pirate_theme else INK)
         painter.setFont(_fit_font(painter, title_rect, title, 28, 17, QFont.Bold))
         painter.drawText(title_rect, Qt.AlignCenter, title)
 
-        painter.setPen(MUTED)
+        painter.setPen(QColor("#e6c77e") if self.modern_pirate_theme else MUTED)
         painter.setFont(_fit_font(painter, subtitle_rect, subtitle, 13, 9, QFont.Bold))
         painter.drawText(subtitle_rect, Qt.AlignCenter, subtitle)
 
         if description:
-            painter.setPen(BLACK if self.print_mode else QColor("#3a2a18"))
+            painter.setPen(QColor("#f2e1b4") if self.modern_pirate_theme else (BLACK if self.plain_print_mode else QColor("#3a2a18")))
             painter.setFont(_fit_font(painter, desc_rect, description, 11, 8, QFont.Normal))
             painter.drawText(desc_rect, Qt.AlignCenter | Qt.TextWordWrap, description)
 
-        painter.setPen(QPen(BLACK if self.print_mode else GOLD, 2))
+        painter.setPen(QPen(BLACK if self.plain_print_mode else (QColor("#d6a746") if self.modern_pirate_theme else GOLD), 2))
         painter.drawLine(outer.left() + 42, outer.top() + 144, outer.right() - 42, outer.top() + 144)
 
     def _draw_grid(self, painter: QPainter, outer: QRect) -> None:
@@ -389,12 +568,12 @@ class PirateKeyWidget(QWidget):
         if not self.items:
             painter.setPen(INK)
             painter.setFont(QFont("Georgia", 18, QFont.Bold))
-            top_offset = 40 if self.print_mode else 170
+            top_offset = 40 if self.plain_print_mode else 170
             painter.drawText(outer.adjusted(40, top_offset, -40, -40), Qt.AlignTop | Qt.AlignCenter, "Tato šifra zatím neposkytuje data klíče.")
             return
 
         left = outer.left() + 34
-        top = outer.top() + (30 if self.print_mode else 160)
+        top = outer.top() + (30 if self.plain_print_mode else 160)
         width = outer.width() - 68
         cols = self.column_count(width)
         cell_w = width / max(1, cols)
@@ -423,7 +602,7 @@ class PirateKeyWidget(QWidget):
         ]
 
         left = outer.left() + 42
-        top = outer.top() + (34 if self.print_mode else 170)
+        top = outer.top() + (34 if self.plain_print_mode else 170)
         width = outer.width() - 84
 
         # Výšky řádků jsou pevně definované kvůli konzistentnímu vzhledu tabulky.
@@ -442,7 +621,7 @@ class PirateKeyWidget(QWidget):
 
         # Podklad tabulky je zvolený tak, aby byl čitelný v UI i při tisku.
         table_rect = QRect(int(left), int(top), int(width), int(table_h))
-        painter.fillRect(table_rect, WHITE if self.print_mode else QColor("#fff1c9"))
+        painter.fillRect(table_rect, PRINT_WHITE if self.plain_print_mode else QColor("#fff1c9"))
 
         # Vykreslení vnějšího rámečku a hlavních vodorovných oddělovačů.
         painter.setPen(QPen(GRID, 2))
@@ -535,9 +714,9 @@ class PirateKeyWidget(QWidget):
             ]
 
         # Rozměry tabulky jsou centrované a přizpůsobené dostupnému prostoru.
-        top = outer.top() + (34 if self.print_mode else 170)
+        top = outer.top() + (34 if self.plain_print_mode else 170)
         available_w = outer.width() - 120
-        available_h = outer.height() - (94 if self.print_mode else 230)
+        available_h = outer.height() - (94 if self.plain_print_mode else 230)
         table_w = max(620, min(available_w, int(available_h * 1.65)))
         table_h = max(300, min(available_h, int(table_w * 0.52)))
         left = outer.center().x() - table_w // 2
@@ -553,7 +732,7 @@ class PirateKeyWidget(QWidget):
 
         # Světlý podklad zlepšuje čitelnost obsahu tabulky.
         table_rect = QRect(int(left), int(top), int(table_w), int(table_h))
-        painter.fillRect(table_rect, WHITE if self.print_mode else QColor("#fff1c9"))
+        painter.fillRect(table_rect, PRINT_WHITE if self.plain_print_mode else QColor("#fff1c9"))
 
         # Mřížka 3×3 používá výrazné linky odpovídající vizuálnímu vzoru klíče.
         painter.setPen(QPen(BLACK, 3))
@@ -564,8 +743,8 @@ class PirateKeyWidget(QWidget):
             y = int(top + i * group_h)
             painter.drawLine(int(left), y, int(left + table_w), y)
 
-        number_color = BLACK if self.print_mode else QColor("#b88700")
-        red = BLACK if self.print_mode else QColor("#d00000")
+        number_color = BLACK if self.plain_print_mode else QColor("#b88700")
+        red = BLACK if self.plain_print_mode else QColor("#d00000")
 
         for index, (group_number, letters) in enumerate(normalized_groups[:9]):
             row = index // 3
@@ -613,12 +792,43 @@ class PirateKeyWidget(QWidget):
 
     def _draw_cell(self, painter: QPainter, cell: QRect, item: dict[str, Any]) -> None:
         header_h = 48
+        if self.decorated_pirate_mode:
+            panel = cell.adjusted(4, 4, -4, -4)
+            painter.setPen(QPen(QColor(177, 126, 43, 220), 2))
+            painter.setBrush(QColor(247, 226, 174, 205))
+            painter.drawRoundedRect(panel, 10, 10)
+
+            header = QRect(panel.left(), panel.top(), panel.width(), header_h)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(7, 31, 40, 232))
+            painter.drawRoundedRect(header, 9, 9)
+            painter.fillRect(QRect(header.left(), header.bottom() - 9, header.width(), 10), QColor(7, 31, 40, 232))
+            painter.setPen(QPen(QColor(214, 170, 78, 230), 2))
+            painter.drawLine(panel.left(), panel.top() + header_h, panel.right(), panel.top() + header_h)
+
+            painter.setPen(QColor("#f5d989"))
+            painter.setFont(_fit_font(painter, header.adjusted(4, 2, -4, -2), item["label"], 22, 12, QFont.Bold))
+            painter.drawText(header.adjusted(4, 2, -4, -2), Qt.AlignCenter, item["label"])
+
+            body = QRect(panel.left() + 8, panel.top() + header_h + 6, panel.width() - 16, panel.height() - header_h - 12)
+            if self.key_type == "binary_squares":
+                self._draw_binary(painter, body, str(item.get("value", "")))
+            elif self.key_type == "braille":
+                self._draw_braille(painter, body, item.get("value"))
+            elif self.key_type == "image_map":
+                self._draw_image(painter, body, item.get("value"), str(item.get("note", "")))
+            elif self.key_type == "visual_widget":
+                self._draw_visual_widget(painter, body, item["label"])
+            else:
+                self._draw_generic(painter, body, item)
+            return
+
         painter.setPen(QPen(GRID, 2))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(cell)
 
         header = QRect(cell.left(), cell.top(), cell.width(), header_h)
-        painter.fillRect(header.adjusted(1, 1, -1, -1), WHITE if self.print_mode else PARCHMENT_LIGHT)
+        painter.fillRect(header.adjusted(1, 1, -1, -1), PRINT_WHITE if self.plain_print_mode else PARCHMENT_LIGHT)
         painter.setPen(QPen(GRID, 2))
         painter.drawLine(cell.left(), cell.top() + header_h, cell.right(), cell.top() + header_h)
 
@@ -1240,7 +1450,7 @@ def save_key_png_for_module(cipher_name: str, module: Any, output_path: str, wid
     widget.setMinimumSize(width, height)
 
     pixmap = QPixmap(widget.size())
-    pixmap.fill(WHITE if print_mode else Qt.transparent)
+    pixmap.fill(PRINT_WHITE if print_mode else Qt.transparent)
     widget.render(pixmap)
 
     folder = os.path.dirname(output_path)
@@ -1310,7 +1520,7 @@ try:
         cached = _GLOBAL_KEY_DATA_CACHE.get(cache_key)
         if isinstance(cached, dict):
             return cached
-        data = _ORIGINAL_MAKE_KEY_DATA_FAST(cipher_name, module, context)
+        data = _brand_key_data(cipher_name, _ORIGINAL_MAKE_KEY_DATA_FAST(cipher_name, module, context))
         if isinstance(data, dict):
             if len(_GLOBAL_KEY_DATA_CACHE) > 200:
                 _GLOBAL_KEY_DATA_CACHE.clear()

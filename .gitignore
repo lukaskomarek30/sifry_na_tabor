@@ -1,0 +1,19 @@
+# Python a testovaci docasne soubory
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Lokalni virtualni prostredi a sestaveni
+.venv/
+venv/
+build/
+dist/
+
+# Vygenerovane vyvojove nahledy a logy
+output/
+tmp/
+*.log
+
+# Systemove soubory
+.DS_Store
+Thumbs.db
