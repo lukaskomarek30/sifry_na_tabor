@@ -1,4 +1,4 @@
-APP_VERSION = "0.0.2"
+APP_VERSION = "0.0.4"
 APP_NAME = "Sifrator_Mraveniste"
 """
 main_window.py – SifratorWindow, LiveLogDialog a všechny rozšiřující patche.
@@ -30,7 +30,7 @@ import zipfile
 from datetime import date, datetime, timedelta
 from xml.etree import ElementTree as ET
 
-from PySide6.QtCore import Qt, QRect, QRectF, QSize, QTimer, QUrl, QEvent, QDate
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QRect, QRectF, QSize, QTimer, QUrl, QEvent, QDate
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPixmap, QTextOption, QPen, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QWidget,
     QGridLayout,
+    QGraphicsOpacityEffect,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -55,7 +56,9 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QFileDialog,
     QSpinBox,
+    QAbstractScrollArea,
     QAbstractSpinBox,
+    QStackedWidget,
 )
 
 try:
@@ -76,6 +79,11 @@ from app_paths import (
 from cipher_registry import get_cipher_logic, get_cipher_widget_class, get_pirate_key_renderer, list_cipher_names
 from ui_widgets import Colors, CaesarDirectionCombo, CipherItem
 from skin_widget import SifratorSkinWidget, BASE_W, BASE_H
+from home_menu import PirateHomeWidget
+from sports_day import SportsDayDialog
+from diploma import DiplomaDialog
+from groups import GroupsDialog
+from fire_effects import PirateModuleDialog
 
 
 _RANDOM_EASY_CIPHER_NAME = "Náhodná lehká šifra"
@@ -2393,7 +2401,7 @@ def make_app_icon_from_logo(icons_path):
 class SifratorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"ŠIFRÁTOR MRAVENIŠTĚ - PIRÁTI Z KARIBIKU v{APP_VERSION}")
+        self.setWindowTitle(f"TÁBOROVÁ PALUBA MRAVENIŠTĚ - PIRÁTI Z KARIBIKU v{APP_VERSION}")
 
         # Responzivní obal pro celé pirátské UI.
         # Důvod: samotný skin má poměr 1672 × 941 a na menších MacBoocích / noteboocích
@@ -2432,7 +2440,78 @@ class SifratorWindow(QMainWindow):
                 height: 0px;
             }
         """)
-        self.setCentralWidget(self.ui_scroll_area)
+        # Aplikace se otevírá do samostatné domovské obrazovky. Původní
+        # šifrátor zůstává beze změny na druhé stránce zásobníku.
+        self.home_page = PirateHomeWidget(self.central.icons_path, APP_VERSION, self)
+        self.home_page.navigate_requested.connect(self._open_home_destination)
+
+        self.page_stack = QStackedWidget(self)
+        self.page_stack.setStyleSheet("background: #06131b;")
+        self.page_stack.addWidget(self.home_page)
+        self.page_stack.addWidget(self.ui_scroll_area)
+
+        # Společná horní navigace pro všechny stránky otevřené z dlaždic.
+        # Domovská obrazovka ji nepotřebuje, v obsahu nahrazuje samostatná okna.
+        self.app_shell = QWidget(self)
+        self._content_entry_animation = None
+        self._content_entry_effect = None
+        shell_layout = QVBoxLayout(self.app_shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        self.content_navbar = QWidget(self.app_shell)
+        self.content_navbar.setFixedHeight(54)
+        self.content_navbar.setStyleSheet("""
+            QWidget {
+                background-color: #061923;
+                border-bottom: 1px solid #8d6935;
+            }
+        """)
+        nav_layout = QHBoxLayout(self.content_navbar)
+        nav_layout.setContentsMargins(12, 6, 18, 6)
+        nav_layout.setSpacing(14)
+
+        self.home_button = QPushButton("VELITELSKÁ PALUBA", self.content_navbar)
+        self.home_button.setCursor(Qt.PointingHandCursor)
+        self.home_button.setFixedHeight(40)
+        self.home_button.setIcon(QIcon(os.path.join(self.central.icons_path, "anchor.png")))
+        self.home_button.setIconSize(QSize(25, 25))
+        self.home_button.setToolTip("Vrátit se na velitelskou palubu")
+        self.home_button.setStyleSheet("""
+            QPushButton {
+                color: #f3d79a;
+                background-color: rgba(5, 25, 35, 235);
+                border: 1px solid #c89a4c;
+                border-radius: 10px;
+                padding: 5px 11px;
+                font-family: Georgia;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                color: #fff0bd;
+                background-color: rgba(13, 63, 72, 245);
+                border: 2px solid #f3d79a;
+            }
+            QPushButton:pressed {
+                background-color: rgba(8, 42, 52, 250);
+            }
+        """)
+        self.home_button.clicked.connect(self.show_home_page)
+        nav_layout.addWidget(self.home_button)
+
+        self.content_title = QLabel(self.content_navbar)
+        self.content_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.content_title.setStyleSheet(
+            "color: #f3d79a; background: transparent; border: none; "
+            "font-family: Georgia; font-size: 16px; font-weight: bold; letter-spacing: 1px;"
+        )
+        nav_layout.addWidget(self.content_title, 1)
+
+        shell_layout.addWidget(self.content_navbar)
+        shell_layout.addWidget(self.page_stack, 1)
+        self.setCentralWidget(self.app_shell)
+        self.content_navbar.hide()
 
         self.setMinimumSize(800, 600)
         self.resize(*self._initial_window_size())
@@ -2454,6 +2533,174 @@ class SifratorWindow(QMainWindow):
         # Kontrola aktualizací až po zobrazení okna.
         # Když není internet nebo není novější verze, nic nevyskočí.
         QTimer.singleShot(1500, self.check_updates_after_start)
+
+    def show_home_page(self):
+        self.content_navbar.hide()
+        self.page_stack.setCurrentWidget(self.home_page)
+        self.home_page.show_main_menu(animated=True)
+        self.setWindowTitle(f"TÁBOROVÁ PALUBA MRAVENIŠTĚ - PIRÁTI Z KARIBIKU v{APP_VERSION}")
+
+    def _show_content_page(self, page, title: str):
+        self.content_title.setText(str(title or "").upper())
+        self.content_navbar.show()
+        self.page_stack.setCurrentWidget(page)
+        self.setWindowTitle(f"{title} - TÁBOROVÁ PALUBA MRAVENIŠTĚ v{APP_VERSION}")
+        self._animate_content_page_entry()
+
+    def _animate_content_page_entry(self):
+        """Plynule zobrazi celou cilovou obrazovku po zmizeni dlazdic menu."""
+        if self._content_entry_animation is not None:
+            self._content_entry_animation.stop()
+            self._content_entry_animation = None
+        self.app_shell.setGraphicsEffect(None)
+
+        effect = QGraphicsOpacityEffect(self.app_shell)
+        effect.setOpacity(0.0)
+        self.app_shell.setGraphicsEffect(effect)
+
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(360)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._content_entry_effect = effect
+        self._content_entry_animation = animation
+
+        def finish_entry():
+            if self._content_entry_animation is not animation:
+                return
+            self.app_shell.setGraphicsEffect(None)
+            self._content_entry_effect = None
+            self._content_entry_animation = None
+
+        animation.finished.connect(finish_entry)
+        animation.start()
+
+    def show_cipher_page(self):
+        self._show_content_page(self.ui_scroll_area, "Šifrátor")
+        QTimer.singleShot(0, self._apply_responsive_canvas_size)
+
+    def _show_embedded_dialog_page(self, dialog, title: str):
+        page = getattr(dialog, "_embedded_page", None)
+        if page is None:
+            dialog.setWindowFlags(Qt.Widget)
+            dialog.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            page = QScrollArea(self.page_stack)
+            page.setWidgetResizable(True)
+            page.setFrameShape(QScrollArea.NoFrame)
+            page.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            page.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            page.setStyleSheet("""
+                QScrollArea {
+                    background: #06131b;
+                    border: none;
+                }
+                QScrollBar:vertical, QScrollBar:horizontal {
+                    background: rgba(20, 17, 12, 160);
+                    border-radius: 5px;
+                    margin: 2px;
+                }
+                QScrollBar:vertical { width: 12px; }
+                QScrollBar:horizontal { height: 12px; }
+                QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                    background: #b89b68;
+                    border-radius: 5px;
+                    min-height: 34px;
+                    min-width: 34px;
+                }
+            """)
+            page.setWidget(dialog)
+            dialog._embedded_page = page
+            self.page_stack.addWidget(page)
+            dialog.finished.connect(
+                lambda _result, embedded_page=page: (
+                    self.show_home_page() if self.page_stack.currentWidget() is embedded_page else None
+                )
+            )
+        dialog.show()
+        self._show_content_page(page, title)
+
+    def _open_home_destination(self, route: str):
+        if route == "cipher":
+            self.show_cipher_page()
+            return
+        if route == "planner":
+            self.show_camp_planner_window()
+            return
+        if route == "batch":
+            self.show_batch_encrypt_window()
+            return
+        if route == "overview":
+            self.show_cipher_overview_window()
+            return
+        if route == "history":
+            self.show_history_window()
+            return
+        if route == "sports":
+            self.show_sports_day_window()
+            return
+        if route == "groups":
+            self.show_groups_window()
+            return
+        if route == "diploma":
+            self.show_diploma_window()
+            return
+        if route == "diploma_sports":
+            self.show_diploma_window("sports")
+            return
+        if route == "diploma_camp":
+            self.show_diploma_window("camp")
+            return
+        if route == "diploma_cleaning":
+            self.show_diploma_window("cleaning")
+            return
+        if route == "diploma_cleaning_award":
+            self.show_diploma_window("cleaning_award")
+            return
+        if route == "diploma_daily":
+            self.show_diploma_window("daily")
+            return
+        if route == "diploma_meal":
+            self.show_diploma_window("meal")
+
+    def show_sports_day_window(self):
+        dialog = getattr(self, "_sports_day_dialog", None)
+        if dialog is None:
+            dialog = SportsDayDialog(self, self.central.icons_path)
+            self._sports_day_dialog = dialog
+        else:
+            dialog.refresh_all()
+        self._show_embedded_dialog_page(dialog, "Sportovní den")
+
+    def show_groups_window(self):
+        dialog = getattr(self, "_groups_dialog", None)
+        if dialog is None:
+            dialog = GroupsDialog(self, self.central.icons_path)
+            self._groups_dialog = dialog
+        else:
+            dialog.refresh_data()
+        self._show_embedded_dialog_page(dialog, "Oddíly")
+
+    def show_diploma_window(self, diploma_kind=None):
+        dialog = getattr(self, "_diploma_dialog", None)
+        if dialog is None:
+            dialog = DiplomaDialog(self, self.central.icons_path)
+            self._diploma_dialog = dialog
+        if diploma_kind == "sports":
+            dialog.show_sports_diploma()
+        elif diploma_kind == "camp":
+            dialog.show_camp_diploma()
+        elif diploma_kind == "cleaning":
+            dialog.show_cleaning_sheet()
+        elif diploma_kind == "cleaning_award":
+            dialog.show_cleaning_award()
+        elif diploma_kind == "daily":
+            dialog.show_daily_program()
+        elif diploma_kind == "meal":
+            dialog.show_meal_plan()
+        else:
+            dialog.show_choices()
+        self._show_embedded_dialog_page(dialog, "Diplom")
 
     def _available_screen_geometry(self):
         app = QApplication.instance()
@@ -2507,7 +2754,8 @@ class SifratorWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        QTimer.singleShot(0, self._apply_responsive_canvas_size)
+        if hasattr(self, "page_stack") and self.page_stack.currentWidget() is self.ui_scroll_area:
+            QTimer.singleShot(0, self._apply_responsive_canvas_size)
 
     def check_updates_after_start(self):
         update_data = update_manager.check_for_update(APP_VERSION)
@@ -3860,7 +4108,7 @@ def _history_format_entries_html(entries: list[dict]) -> str:
     separator = "<div style='height:1px; background:#6f5734; margin:12px 0 18px 0;'></div>"
     return (
         "<html><body style='color:#f0e2c0; font-family:Consolas, Menlo, Monaco, monospace; "
-        "font-size:12px; background:#071018;'>"
+        "font-size:12px; background:transparent;'>"
         + separator.join(blocks)
         + "</body></html>"
     )
@@ -3999,11 +4247,15 @@ def _history_schedule_capture(widget, delay_ms: int = 900) -> None:
         pass
 
 
-class HistoryDialog(QDialog):
+class HistoryDialog(PirateModuleDialog):
     """Okno s historií zašifrovaných zpráv."""
 
     def __init__(self, owner_window):
-        super().__init__(owner_window)
+        super().__init__(
+            owner_window,
+            "history_BG.png",
+            ((0.065, 0.287, 0.95), (0.871, 0.237, 0.30), (0.945, 0.837, 1.20)),
+        )
         self.owner_window = owner_window
         self.setWindowTitle("Historie zašifrovaných zpráv")
         self.resize(900, 620)
@@ -4058,6 +4310,7 @@ class HistoryDialog(QDialog):
         self.refresh_button.clicked.connect(self.refresh_history)
         self.close_button.clicked.connect(self.close)
 
+        self.apply_pirate_glass()
         self.refresh_history()
 
     def selected_or_visible_text(self) -> str:
@@ -5338,11 +5591,20 @@ class PlannerDayDetailDialog(QDialog):
         super().closeEvent(event)
 
 
-class CampPlannerDialog(QDialog):
+class CampPlannerDialog(PirateModuleDialog):
     """Kalendářový plánovač šifer na jednotlivé dny tábora."""
 
     def __init__(self, owner_window):
-        super().__init__(owner_window)
+        super().__init__(
+            owner_window,
+            "planner_BG.png",
+            (
+                (0.117, 0.223, 0.82),
+                (0.227, 0.524, 0.36),
+                (0.307, 0.539, 0.32),
+                (0.957, 0.835, 1.18),
+            ),
+        )
         self.owner_window = owner_window
         self.available_names = _planner_known_cipher_names()
         self.plan = _planner_load()
@@ -5487,7 +5749,15 @@ class CampPlannerDialog(QDialog):
         right_col = QVBoxLayout(right_panel)
         right_col.setContentsMargins(12, 12, 12, 12)
         right_col.setSpacing(8)
-        body.addWidget(right_panel, 2)
+        self.editor_scroll = QScrollArea(self)
+        self.editor_scroll.setObjectName("plannerEditorScroll")
+        self.editor_scroll.setWidgetResizable(True)
+        self.editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.editor_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.editor_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.editor_scroll.setSizeAdjustPolicy(QAbstractScrollArea.AdjustIgnored)
+        self.editor_scroll.setWidget(right_panel)
+        body.addWidget(self.editor_scroll, 2)
 
         self.editor_title = QLabel(self)
         self.editor_title.setStyleSheet("color: #f3d79a; font-size: 16px; font-weight: bold;")
@@ -5649,6 +5919,12 @@ class CampPlannerDialog(QDialog):
         self.rebuild_calendar_cards()
         self.select_day(1, save=False)
         self.refresh_overview(save=False)
+        self.apply_pirate_glass()
+        self.editor_scroll.setStyleSheet(
+            self.editor_scroll.styleSheet()
+            + "QScrollArea#plannerEditorScroll { background: transparent; border: none; }"
+        )
+        self.editor_scroll.viewport().setStyleSheet("background: transparent;")
 
     def ensure_day_count(self):
         if hasattr(self, "start_date_edit") and hasattr(self, "end_date_edit"):
@@ -5823,7 +6099,7 @@ class CampPlannerDialog(QDialog):
         checked = day_index in self.selected_day_indexes
         repeated = self.day_has_repeated_cipher(day_index)
         border = "#f3d79a" if selected else "#d65f51" if repeated else "#0f8aa8" if checked else "#8a6938"
-        background = "rgba(16, 50, 70, 210)" if selected else "rgba(13, 39, 58, 190)" if checked else "rgba(7, 16, 24, 170)"
+        background = "rgba(16, 67, 78, 142)" if selected else "rgba(13, 48, 61, 112)" if checked else "rgba(2, 13, 21, 54)"
         return (
             "QWidget#plannerDayCard {"
             f"background: {background};"
@@ -6628,6 +6904,12 @@ def _random_easy_key_data(generated: dict) -> dict:
         "title": f"Klíč šifry – {generated.get('name', _RANDOM_EASY_CIPHER_NAME)}",
         "subtitle": "Šifrátor Mraveniště – náhodná lehká šifra",
         "description": "Dětem dej jen zašifrovaný text. Klíč a nápovědu použij postupně podle potřeby.",
+        "cipher_name": _RANDOM_EASY_CIPHER_NAME,
+        "logo_path": os.path.join(get_icons_dir(), _RANDOM_EASY_CIPHER_ICON),
+        "theme": "pirate_modern",
+        "background_path": os.path.join(
+            get_icons_dir(), "key_templates", "pirate_key_morse_template.png"
+        ),
         "type": "generic",
         "columns": 2,
         "items": [
@@ -6719,11 +7001,15 @@ SifratorSkinWidget.decrypt_selected_cipher = _random_easy_decrypt_selected_ciphe
 SifratorSkinWidget.show_cipher_key = _random_easy_show_cipher_key
 
 
-class CipherOverviewDialog(QDialog):
+class CipherOverviewDialog(PirateModuleDialog):
     """Přehled použití, obtížnosti, věku, poznámek a náhodných šifer."""
 
     def __init__(self, owner_window):
-        super().__init__(owner_window)
+        super().__init__(
+            owner_window,
+            "overview_BG.png",
+            ((0.167, 0.255, 0.70), (0.870, 0.252, 0.70), (0.919, 0.797, 1.18)),
+        )
         self.owner_window = owner_window
         self.central = getattr(owner_window, "central", None)
         self.notes = _cipher_notes_load()
@@ -6818,6 +7104,7 @@ class CipherOverviewDialog(QDialog):
         self.refresh_button.clicked.connect(self.refresh_overview)
         self.close_button.clicked.connect(self.close)
 
+        self.apply_pirate_glass()
         self.refresh_overview()
 
     def cipher_names(self) -> list[str]:
@@ -7129,7 +7416,7 @@ def _batch_station_title_from_template(item: dict, settings: dict) -> str:
 def _batch_results_html(results: list[dict], print_mode: bool = False, settings: dict | None = None) -> str:
     if not results:
         empty = "Výsledky zatím nejsou připravené."
-        return f"<html><body style='color:#f0e2c0; background:#071018;'>{empty}</body></html>"
+        return f"<html><body style='color:#f0e2c0; background:transparent;'>{empty}</body></html>"
 
     settings = settings or {}
     heading_size = int(_print_settings_value(settings, "heading_size", 14 if print_mode else 14))
@@ -7144,7 +7431,7 @@ def _batch_results_html(results: list[dict], print_mode: bool = False, settings:
     output_label = str(_print_settings_value(settings, "output_label", "Zašifrováno:"))
 
     body_color = "#111111" if print_mode else "#f0e2c0"
-    background = "#ffffff" if print_mode else "#071018"
+    background = "#ffffff" if print_mode else "transparent"
     title_color = "#10223a" if print_mode else "#f3d79a"
     line_color = "#777777" if print_mode else "#8a6938"
     card_style = (
@@ -7293,11 +7580,15 @@ def _batch_save_result_to_history(item: dict) -> None:
         _sifrator_debug_log(f"Hromadné šifrování: zápis do historie selhal: {type(error).__name__}: {error}")
 
 
-class BatchEncryptDialog(QDialog):
+class BatchEncryptDialog(PirateModuleDialog):
     """Hromadné šifrování více zpráv najednou."""
 
     def __init__(self, owner_window):
-        super().__init__(owner_window)
+        super().__init__(
+            owner_window,
+            "batch_BG.png",
+            ((0.063, 0.227, 0.78), (0.946, 0.834, 1.18)),
+        )
         self.owner_window = owner_window
         self.results = []
         self.station_cipher_combos = []
@@ -7476,6 +7767,10 @@ class BatchEncryptDialog(QDialog):
         self.update_controls_visibility()
         self.update_message_count()
         self.refresh_results()
+        self.apply_pirate_glass()
+        self.station_cipher_content.setStyleSheet(
+            self.station_cipher_content.styleSheet() + "QWidget { background: transparent; }"
+        )
 
     def current_cipher_name(self) -> str:
         return self.cipher_combo.currentText().strip()
@@ -8376,57 +8671,40 @@ def _window_show_live_log_window(self):
 
 def _window_show_history_window(self):
     dialog = getattr(self, "_history_dialog", None)
-    if dialog is not None and dialog.isVisible():
+    if dialog is not None:
         dialog.refresh_history()
-        dialog.raise_()
-        dialog.activateWindow()
-        return
-
-    self._history_dialog = HistoryDialog(self)
-    self._history_dialog.show()
-    self._history_dialog.raise_()
-    self._history_dialog.activateWindow()
+    else:
+        dialog = HistoryDialog(self)
+        self._history_dialog = dialog
+    self._show_embedded_dialog_page(dialog, "Historie zpráv")
 
 
 def _window_show_cipher_overview_window(self):
     dialog = getattr(self, "_cipher_overview_dialog", None)
-    if dialog is not None and dialog.isVisible():
+    if dialog is not None:
         dialog.refresh_overview()
-        dialog.raise_()
-        dialog.activateWindow()
-        return
-
-    self._cipher_overview_dialog = CipherOverviewDialog(self)
-    self._cipher_overview_dialog.show()
-    self._cipher_overview_dialog.raise_()
-    self._cipher_overview_dialog.activateWindow()
+    else:
+        dialog = CipherOverviewDialog(self)
+        self._cipher_overview_dialog = dialog
+    self._show_embedded_dialog_page(dialog, "Přehled šifer")
 
 
 def _window_show_batch_encrypt_window(self):
     dialog = getattr(self, "_batch_encrypt_dialog", None)
-    if dialog is not None and dialog.isVisible():
-        dialog.raise_()
-        dialog.activateWindow()
-        return
-
-    self._batch_encrypt_dialog = BatchEncryptDialog(self)
-    self._batch_encrypt_dialog.show()
-    self._batch_encrypt_dialog.raise_()
-    self._batch_encrypt_dialog.activateWindow()
+    if dialog is None:
+        dialog = BatchEncryptDialog(self)
+        self._batch_encrypt_dialog = dialog
+    self._show_embedded_dialog_page(dialog, "Hromadné šifrování")
 
 
 def _window_show_camp_planner_window(self):
     dialog = getattr(self, "_camp_planner_dialog", None)
-    if dialog is not None and dialog.isVisible():
+    if dialog is not None:
         dialog.refresh_overview(save=False)
-        dialog.raise_()
-        dialog.activateWindow()
-        return
-
-    self._camp_planner_dialog = CampPlannerDialog(self)
-    self._camp_planner_dialog.show()
-    self._camp_planner_dialog.raise_()
-    self._camp_planner_dialog.activateWindow()
+    else:
+        dialog = CampPlannerDialog(self)
+        self._camp_planner_dialog = dialog
+    self._show_embedded_dialog_page(dialog, "Plánovač tábora")
 
 
 def _window_show_update_offer(self, update_data: dict, manual: bool = False):
@@ -8784,6 +9062,25 @@ def run_smoke_test() -> int:
 
     check(os.path.isdir(get_icons_dir()), "icons", "Chybi slozka icons")
     check(
+        os.path.exists(os.path.join(get_icons_dir(), "groups_BG.png")),
+        "groups_BG.png",
+        "Chybi piratske pozadi modulu Oddily",
+    )
+    for relative_asset in (
+        os.path.join("diplomas", "sports_d.png"),
+        os.path.join("documents", "daily_a.png"),
+        os.path.join("documents", "daily_b.png"),
+        os.path.join("documents", "cleaning_award_a.png"),
+        os.path.join("documents", "cleaning_award_b.png"),
+        os.path.join("documents", "meal_a.png"),
+        os.path.join("documents", "meal_b.png"),
+    ):
+        check(
+            os.path.exists(os.path.join(get_icons_dir(), relative_asset)),
+            relative_asset,
+            f"Chybi tiskovy podklad {relative_asset}",
+        )
+    check(
         os.path.isdir(os.path.join(get_app_dir(), "logika_sifer"))
         or os.path.isdir(os.path.join(get_script_dir(), "logika_sifer"))
         or os.path.isdir(os.path.join(get_app_dir(), "logika_sifer"))
@@ -8798,6 +9095,16 @@ def run_smoke_test() -> int:
         check(renderer is not None, "pirate_key_renderer import", "Nepodarilo se nacist pirate_key_renderer.py")
     except Exception as error:
         errors.append(f"Chyba pirate_key_renderer.py: {error}")
+
+    try:
+        import openpyxl  # noqa: F401
+        try:
+            import xlrd  # noqa: F401
+        except ImportError:
+            from vendor import xlrd  # noqa: F401
+        check(True, "Excel import/export", "Chybi knihovny pro Excel")
+    except Exception as error:
+        errors.append(f"Chybi knihovny pro Excel import/export: {error}")
 
     logic_tests = list_cipher_names()
 
