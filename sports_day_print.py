@@ -5,10 +5,11 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import QMarginsF, QRect, QRectF, QSize, QSizeF, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPageLayout, QPageSize, QPainter, QPen, QTextDocument
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QImage, QPageLayout, QPageSize, QPainter, QPen, QTextDocument
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDialog,
     QFileDialog,
     QFrame,
@@ -25,6 +26,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from groups_data import normalized_label, roster_entries
+
 
 PRINT_PAGE_SIZES = {
     "A5": QSizeF(420, 595),
@@ -33,6 +36,127 @@ PRINT_PAGE_SIZES = {
     "Letter": QSizeF(612, 792),
     "Legal": QSizeF(612, 1008),
 }
+
+SPORTS_PRINT_FONT_FAMILIES = {
+    "default": {
+        "label": "Původní / Segoe + Georgia",
+        "qfont": "Segoe UI",
+        "body_css": "'Segoe UI',Arial,sans-serif",
+        "heading_css": "Georgia,'Times New Roman',serif",
+    },
+    "pirate": {
+        "label": "Pirátské / Pirata One",
+        "qfont": "Pirata One",
+        "body_css": "'Pirata One',Georgia,serif",
+        "heading_css": "'Pirata One',Georgia,serif",
+    },
+    "serif": {
+        "label": "Klasické / Georgia",
+        "qfont": "Georgia",
+        "body_css": "Georgia,'Times New Roman',serif",
+        "heading_css": "Georgia,'Times New Roman',serif",
+    },
+    "modern": {
+        "label": "Moderní / Segoe UI",
+        "qfont": "Segoe UI",
+        "body_css": "'Segoe UI',Arial,sans-serif",
+        "heading_css": "'Segoe UI',Arial,sans-serif",
+    },
+    "clean": {
+        "label": "Jednoduché / Arial",
+        "qfont": "Arial",
+        "body_css": "Arial,Helvetica,sans-serif",
+        "heading_css": "Arial,Helvetica,sans-serif",
+    },
+    "compact": {
+        "label": "Kompaktní / Tahoma",
+        "qfont": "Tahoma",
+        "body_css": "Tahoma,Arial,sans-serif",
+        "heading_css": "Tahoma,Arial,sans-serif",
+    },
+}
+
+SPORTS_PRINT_FONT_STYLES = {
+    "regular": {
+        "label": "Normální",
+        "bold": False,
+        "italic": False,
+        "body_weight": "400",
+        "heading_weight": "700",
+        "css_style": "normal",
+    },
+    "bold": {
+        "label": "Tučné",
+        "bold": True,
+        "italic": False,
+        "body_weight": "700",
+        "heading_weight": "700",
+        "css_style": "normal",
+    },
+    "italic": {
+        "label": "Kurzíva",
+        "bold": False,
+        "italic": True,
+        "body_weight": "400",
+        "heading_weight": "700",
+        "css_style": "italic",
+    },
+    "bold_italic": {
+        "label": "Tučné kurzíva",
+        "bold": True,
+        "italic": True,
+        "body_weight": "700",
+        "heading_weight": "700",
+        "css_style": "italic",
+    },
+}
+
+
+def _sports_print_font_family(font_key: str | None, icons_path: str = "") -> dict:
+    key = font_key if font_key in SPORTS_PRINT_FONT_FAMILIES else "default"
+    family = dict(SPORTS_PRINT_FONT_FAMILIES[key])
+    if key != "pirate":
+        return family
+
+    try:
+        if family["qfont"] not in QFontDatabase.families():
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = []
+            if icons_path:
+                candidates.append(os.path.join(icons_path, "fonts", "PirataOne-Regular.ttf"))
+            candidates.append(os.path.join(module_dir, "icons", "fonts", "PirataOne-Regular.ttf"))
+            for path in candidates:
+                if not os.path.exists(path):
+                    continue
+                font_id = QFontDatabase.addApplicationFont(path)
+                if font_id >= 0:
+                    registered = QFontDatabase.applicationFontFamilies(font_id)
+                    if registered:
+                        family["qfont"] = registered[0]
+                        family["body_css"] = f"'{registered[0]}',Georgia,serif"
+                        family["heading_css"] = f"'{registered[0]}',Georgia,serif"
+                        break
+    except Exception:
+        pass
+    return family
+
+
+def _sports_print_font_style(style_key: str | None) -> dict:
+    return dict(SPORTS_PRINT_FONT_STYLES.get(style_key or "", SPORTS_PRINT_FONT_STYLES["regular"]))
+
+
+def _sports_print_qfont(
+    font_key: str | None,
+    size: int,
+    style_key: str | None = "regular",
+    icons_path: str = "",
+) -> QFont:
+    family = _sports_print_font_family(font_key, icons_path)
+    style = _sports_print_font_style(style_key)
+    font = QFont(family["qfont"], int(size))
+    font.setBold(bool(style["bold"]))
+    font.setItalic(bool(style["italic"]))
+    return font
 
 
 def _sports_print_page_size(paper_name: str, orientation_name: str) -> QSizeF:
@@ -175,6 +299,28 @@ class _SportsPrintPreviewWidget(QWidget):
 class SportsDayPrintMixin:
     """Tisková část SportsDayDialog bez vlastního stavu."""
 
+    def _event_card_roster_people(self) -> list[dict]:
+        """Vrátí osoby z modulu Oddíly ve tvaru použitelném pro A6 kartičky."""
+        people = []
+        for entry in roster_entries():
+            name = " ".join(str(entry.get("name") or "").split())
+            if not name:
+                continue
+            age = ""
+            for label, value in (entry.get("fields") or {}).items():
+                if normalized_label(label) == "vek":
+                    age = " ".join(str(value or "").split())
+                    break
+            people.append(
+                {
+                    "name": name,
+                    "age": age,
+                    "group_name": " ".join(str(entry.get("group_name") or "").split()),
+                    "role": " ".join(str(entry.get("role") or "").split()),
+                }
+            )
+        return people
+
     def _draw_event_a6_card(
         self,
         painter: QPainter,
@@ -267,6 +413,14 @@ class SportsDayPrintMixin:
         use_background: bool = True,
         economical_print: bool = False,
         show_logo: bool = True,
+        card_person: dict | None = None,
+        card_title: str = "PIRÁTSKÉ VÝZVY",
+        show_title: bool = True,
+        show_frames: bool = True,
+        text_size: int = 10,
+        heading_size: int = 23,
+        font_family: str = "serif",
+        font_style: str = "bold",
     ):
         """Jedna A6 karta obsahující všechny výzvy a pole pro ruční výsledky."""
         painter.save()
@@ -286,29 +440,54 @@ class SportsDayPrintMixin:
         title_color = QColor("#3d200d") if light_style else QColor("#f4dea4")
         text_color = QColor("#4a2d16") if light_style else QColor("#ead39b")
         grid_color = QColor("#8a632c") if light_style else QColor("#d5a34c")
-        painter.setPen(QPen(accent, 3))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(QRect(8, 8, width - 17, height - 17))
+        base_text_size = max(7, min(14, int(text_size or 10)))
+        title_font_size = max(16, min(32, int(heading_size or 23)))
+        icons_path = getattr(self, "icons_path", "")
+        if show_frames:
+            painter.setPen(QPen(accent, 3))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRect(8, 8, width - 17, height - 17))
         if show_logo and not self.coin_pixmap.isNull():
             painter.drawPixmap(38, 27, self.coin_pixmap.scaled(54, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-        painter.setFont(QFont("Georgia", 23, QFont.Bold))
-        painter.setPen(title_color)
         title_left = 104 if show_logo else 40
-        painter.drawText(
-            QRect(title_left, 24, width - title_left - 40, 48),
-            Qt.AlignLeft | Qt.AlignVCenter,
-            "PIRÁTSKÉ VÝZVY",
-        )
-        painter.setFont(QFont("Georgia", 10, QFont.Bold))
+        if show_title:
+            painter.setFont(_sports_print_qfont(font_family, title_font_size, font_style, icons_path))
+            painter.setPen(title_color)
+            painter.drawText(
+                QRect(title_left, 24, width - title_left - 40, 48),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                str(card_title or "PIRÁTSKÉ VÝZVY").upper(),
+            )
+        painter.setFont(_sports_print_qfont(font_family, base_text_size, font_style, icons_path))
         painter.setPen(text_color)
-        painter.drawText(QRect(40, 78, width - 210, 29), Qt.AlignLeft | Qt.AlignVCenter, "JMÉNO PIRÁTA: __________________________")
-        painter.drawText(QRect(width - 195, 78, 155, 29), Qt.AlignLeft | Qt.AlignVCenter, "VĚK: ______")
+        person_name = " ".join(str((card_person or {}).get("name") or "").split())
+        person_age = " ".join(str((card_person or {}).get("age") or "").split())
+        name_text = f"JMÉNO PIRÁTA: {person_name}" if person_name else "JMÉNO PIRÁTA: __________________________"
+        age_text = f"VĚK: {person_age}" if person_age else "VĚK: ______"
+
+        def draw_fitted(rect: QRect, text: str, start_size: int = base_text_size):
+            size = start_size
+            while size > 7:
+                font = _sports_print_qfont(font_family, size, font_style, icons_path)
+                painter.setFont(font)
+                if painter.fontMetrics().horizontalAdvance(text) <= rect.width():
+                    break
+                size -= 1
+            painter.drawText(
+                rect,
+                Qt.AlignLeft | Qt.AlignVCenter,
+                painter.fontMetrics().elidedText(text, Qt.ElideRight, rect.width()),
+            )
+
+        draw_fitted(QRect(40, 78, width - 210, 29), name_text)
+        draw_fitted(QRect(width - 195, 78, 155, 29), age_text)
 
         table_rect = QRect(38, 116, width - 76, height - 190)
-        painter.setPen(QPen(grid_color, 3))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(table_rect, 8, 8)
+        if show_frames:
+            painter.setPen(QPen(grid_color, 3))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(table_rect, 8, 8)
 
         header_height = 42
 
@@ -316,21 +495,22 @@ class SportsDayPrintMixin:
         row_height = (table_rect.height() - header_height) / count
         number_x = table_rect.left() + 48
         result_x = table_rect.left() + int(table_rect.width() * 0.69)
-        painter.setPen(QPen(grid_color, 2))
-        painter.drawLine(number_x, table_rect.top(), number_x, table_rect.bottom())
-        painter.drawLine(result_x, table_rect.top(), result_x, table_rect.bottom())
-        for row in range(count + 1):
-            y = round(table_rect.top() + header_height + row * row_height)
-            painter.drawLine(table_rect.left(), y, table_rect.right(), y)
+        if show_frames:
+            painter.setPen(QPen(grid_color, 2))
+            painter.drawLine(number_x, table_rect.top(), number_x, table_rect.bottom())
+            painter.drawLine(result_x, table_rect.top(), result_x, table_rect.bottom())
+            for row in range(count + 1):
+                y = round(table_rect.top() + header_height + row * row_height)
+                painter.drawLine(table_rect.left(), y, table_rect.right(), y)
 
-        painter.setFont(QFont("Georgia", 10, QFont.Bold))
+        painter.setFont(_sports_print_qfont(font_family, base_text_size, font_style, icons_path))
         painter.setPen(title_color)
         painter.drawText(QRect(table_rect.left(), table_rect.top(), 48, header_height), Qt.AlignCenter, "#")
         painter.drawText(QRect(number_x + 8, table_rect.top(), result_x - number_x - 16, header_height), Qt.AlignVCenter, "VÝZVA")
         painter.drawText(QRect(result_x + 5, table_rect.top(), table_rect.right() - result_x - 10, header_height), Qt.AlignCenter, "VÝSLEDEK")
 
-        row_font_size = max(7, min(11, int(row_height * 0.30)))
-        painter.setFont(QFont("Georgia", row_font_size, QFont.Bold))
+        row_font_size = max(7, min(base_text_size + 1, int(row_height * 0.30)))
+        painter.setFont(_sports_print_qfont(font_family, row_font_size, font_style, icons_path))
         painter.setPen(text_color)
         for index, event in enumerate(events):
             y = round(table_rect.top() + header_height + index * row_height)
@@ -344,7 +524,7 @@ class SportsDayPrintMixin:
                 painter.fontMetrics().elidedText(event_text, Qt.ElideRight, result_x - number_x - 18),
             )
 
-        painter.setFont(QFont("Georgia", 10, QFont.Bold))
+        painter.setFont(_sports_print_qfont(font_family, base_text_size, font_style, icons_path))
         painter.setPen(text_color)
         painter.drawText(QRect(40, table_rect.bottom() + 11, width - 80, 28), Qt.AlignLeft | Qt.AlignVCenter, "MINCE CELKEM: __________")
         painter.restore()
@@ -355,35 +535,69 @@ class SportsDayPrintMixin:
         use_background: bool = True,
         economical_print: bool = False,
         show_logo: bool = True,
+        card_people: list[dict] | None = None,
+        card_title: str = "PIRÁTSKÉ VÝZVY",
+        show_title: bool = True,
+        show_frames: bool = True,
+        text_size: int = 10,
+        heading_size: int = 23,
+        font_family: str = "serif",
+        font_style: str = "bold",
     ):
-        """Jeden A4 list se čtyřmi shodnými A6 kartami; každá obsahuje všechny výzvy."""
+        """A4 listy se čtyřmi A6 kartami; každá obsahuje všechny výzvy."""
         page_width, page_height = 1240, 1754
         card_width, card_height = page_width // 2, page_height // 2
-        page = QImage(page_width, page_height, QImage.Format_ARGB32_Premultiplied)
-        page.fill(QColor("#ffffff"))
-        painter = QPainter(page)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        for slot in range(4):
-            column = slot % 2
-            row = slot // 2
-            card_rect = QRect(column * card_width, row * card_height, card_width, card_height)
-            self._draw_event_list_a6_card(
-                painter,
-                card_rect,
-                self.events,
-                use_background,
-                economical_print,
-                show_logo,
-            )
-        if cut_lines:
-            cut_pen = QPen(QColor(245, 219, 151, 225), 2, Qt.DashLine)
-            painter.setPen(cut_pen)
-            painter.drawLine(card_width, 0, card_width, page_height)
-            painter.drawLine(0, card_height, page_width, card_height)
-        painter.end()
-        return [page]
+        people = [
+            {
+                "name": " ".join(str((person or {}).get("name") or "").split()),
+                "age": " ".join(str((person or {}).get("age") or "").split()),
+            }
+            for person in (card_people or [])
+            if str((person or {}).get("name") or "").strip() or str((person or {}).get("age") or "").strip()
+        ]
+        if not people:
+            people = [{} for _index in range(4)]
+        else:
+            missing_slots = (-len(people)) % 4
+            people.extend({} for _index in range(missing_slots))
+
+        sheets = []
+        for page_start in range(0, len(people), 4):
+            page_people = people[page_start:page_start + 4]
+            page = QImage(page_width, page_height, QImage.Format_ARGB32_Premultiplied)
+            page.fill(QColor("#ffffff"))
+            painter = QPainter(page)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.TextAntialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            for slot in range(4):
+                column = slot % 2
+                row = slot // 2
+                card_rect = QRect(column * card_width, row * card_height, card_width, card_height)
+                self._draw_event_list_a6_card(
+                    painter,
+                    card_rect,
+                    self.events,
+                    use_background,
+                    economical_print,
+                    show_logo,
+                    page_people[slot] if slot < len(page_people) else {},
+                    card_title,
+                    show_title,
+                    show_frames,
+                    text_size,
+                    heading_size,
+                    font_family,
+                    font_style,
+                )
+            if cut_lines:
+                cut_pen = QPen(QColor(245, 219, 151, 225), 2, Qt.DashLine)
+                painter.setPen(cut_pen)
+                painter.drawLine(card_width, 0, card_width, page_height)
+                painter.drawLine(0, card_height, page_width, card_height)
+            painter.end()
+            sheets.append(page)
+        return sheets
 
     def _paint_event_card_sheets(self, printer, sheets: list[QImage]):
         try:
@@ -427,19 +641,21 @@ class SportsDayPrintMixin:
             QDialog#eventCardsPrintDialog { background:#061923; border-image:url("__BG__") 0 0 0 0 stretch stretch; }
             QFrame#cardPrintPanel { background:rgba(4,22,31,238); border:1px solid #a57b38; border-radius:12px; }
             QScrollArea#cardPaperArea { background:#07111f; border:1px solid #a57b38; border-radius:9px; }
+            QScrollArea#cardControlsArea { background:transparent; border:none; }
             QLabel#cardPrintTitle { color:#f4dea4; font-size:20px; font-weight:bold; }
             """.replace("__BG__", background_path)
         )
         outer = QVBoxLayout(dialog)
         outer.setContentsMargins(16, 14, 16, 14)
         outer.setSpacing(10)
+        roster_people = self._event_card_roster_people()
 
         title = QLabel("KARTIČKY VÝZEV A6 • 4 KARTIČKY NA JEDNOM A4", dialog)
         title.setObjectName("cardPrintTitle")
         outer.addWidget(title)
         subtitle = QLabel(
-            f"Všech {len(self.events)} výzev je na každé kartičce A6. Jeden list A4 obsahuje čtyři stejné kartičky. "
-            "Po vytištění je rozstřihni podle středových linek.",
+            f"Všech {len(self.events)} výzev je na každé kartičce A6. Jeden list A4 obsahuje čtyři kartičky. "
+            "Každé další čtyři vyplněné osoby vytvoří další list. Po vytištění je rozstřihni podle středových linek.",
             dialog,
         )
         subtitle.setWordWrap(True)
@@ -450,9 +666,15 @@ class SportsDayPrintMixin:
         content.setSpacing(12)
         outer.addLayout(content, 1)
 
-        controls = QFrame(dialog)
+        controls_scroll = QScrollArea(dialog)
+        controls_scroll.setObjectName("cardControlsArea")
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        controls_scroll.setMinimumWidth(390)
+        controls_scroll.setMaximumWidth(430)
+
+        controls = QFrame(controls_scroll)
         controls.setObjectName("cardPrintPanel")
-        controls.setFixedWidth(300)
         controls_layout = QVBoxLayout(controls)
         controls_layout.setContentsMargins(14, 14, 14, 14)
         controls_layout.setSpacing(10)
@@ -461,22 +683,236 @@ class SportsDayPrintMixin:
         challenge_count.setWordWrap(True)
         challenge_count.setStyleSheet("color:#f4dea4;font-weight:bold;")
         controls_layout.addWidget(challenge_count)
+
+        controls_layout.addWidget(QLabel("LIDÉ NA KARTIČKÁCH", controls))
+        autofill_people = QCheckBox("Doplnit lidi automaticky z Oddílů", controls)
+        autofill_people.setEnabled(bool(roster_people))
+        if not roster_people:
+            autofill_people.setToolTip("V modulu Oddíly zatím nejsou uložená žádná jména.")
+        controls_layout.addWidget(autofill_people)
+
+        person_status = QLabel("", controls)
+        person_status.setWordWrap(True)
+        person_status.setStyleSheet("color:#d8c392;font-size:12px;")
+        controls_layout.addWidget(person_status)
+
+        completion_people = {}
+        completion_labels = []
+        for person in roster_people:
+            detail = " • ".join(
+                part for part in (
+                    person.get("group_name"),
+                    person.get("role"),
+                    f"{person.get('age')} let" if person.get("age") else "",
+                )
+                if part
+            )
+            base_label = f"{person.get('name')} - {detail}" if detail else str(person.get("name") or "")
+            label = base_label
+            duplicate = 2
+            while label in completion_people:
+                label = f"{base_label} ({duplicate})"
+                duplicate += 1
+            completion_people[label] = person
+            completion_labels.append(label)
+
+        refresh_preview = {"callback": None}
+
+        def request_preview(*_args):
+            callback = refresh_preview.get("callback")
+            if callback is not None:
+                callback()
+
+        def attach_roster_completer(name_edit: QLineEdit, age_edit: QLineEdit):
+            if not completion_labels:
+                return
+            completer = QCompleter(completion_labels, name_edit)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchContains)
+            completer.setCompletionMode(QCompleter.PopupCompletion)
+
+            def use_completion(label: str, target_name=name_edit, target_age=age_edit):
+                person = completion_people.get(str(label))
+                if person is None:
+                    return
+                name = str(person.get("name") or "")
+                target_name.setText(name)
+                target_name.setCursorPosition(len(name))
+                target_age.setText(str(person.get("age") or ""))
+
+            completer.activated.connect(use_completion)
+            name_edit.setCompleter(completer)
+
+        manual_people_scroll = QScrollArea(controls)
+        manual_people_scroll.setWidgetResizable(True)
+        manual_people_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        manual_people_scroll.setFixedHeight(210)
+        manual_people_scroll.setStyleSheet("QScrollArea { background:rgba(6,28,38,170); border:1px solid #8d6830; border-radius:8px; }")
+        manual_people_host = QWidget(manual_people_scroll)
+        manual_people_host.setStyleSheet("background:transparent;")
+        manual_people_layout = QVBoxLayout(manual_people_host)
+        manual_people_layout.setContentsMargins(7, 7, 7, 7)
+        manual_people_layout.setSpacing(5)
+
+        people_header = QWidget(manual_people_host)
+        people_header_layout = QHBoxLayout(people_header)
+        people_header_layout.setContentsMargins(0, 0, 0, 0)
+        people_header_layout.setSpacing(6)
+        number_header = QLabel("#", people_header)
+        number_header.setFixedWidth(24)
+        name_header = QLabel("Jméno", people_header)
+        age_header = QLabel("Věk", people_header)
+        age_header.setFixedWidth(54)
+        people_header_layout.addWidget(number_header)
+        people_header_layout.addWidget(name_header, 1)
+        people_header_layout.addWidget(age_header)
+        people_header_layout.addSpacing(34)
+        manual_people_layout.addWidget(people_header)
+        manual_people_layout.addStretch(1)
+        manual_people_scroll.setWidget(manual_people_host)
+        controls_layout.addWidget(manual_people_scroll)
+
+        manual_person_rows = []
+
+        def refresh_person_row_numbers():
+            for index, row in enumerate(manual_person_rows, 1):
+                row["number"].setText(str(index))
+                row["remove"].setEnabled(len(manual_person_rows) > 1)
+
+        def add_person_row(person: dict | None = None, focus: bool = False):
+            person = person or {}
+            row_widget = QWidget(manual_people_host)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            number_label = QLabel("", row_widget)
+            number_label.setAlignment(Qt.AlignCenter)
+            number_label.setFixedWidth(24)
+            name_edit = QLineEdit(row_widget)
+            name_edit.setPlaceholderText("Jméno z Oddílů nebo vlastní")
+            age_edit = QLineEdit(row_widget)
+            age_edit.setPlaceholderText("Věk")
+            age_edit.setFixedWidth(54)
+            remove_button = QPushButton("×", row_widget)
+            remove_button.setObjectName("dangerButton")
+            remove_button.setFixedWidth(30)
+            attach_roster_completer(name_edit, age_edit)
+            name_edit.setText(str(person.get("name") or ""))
+            age_edit.setText(str(person.get("age") or ""))
+            row_layout.addWidget(number_label)
+            row_layout.addWidget(name_edit, 1)
+            row_layout.addWidget(age_edit)
+            row_layout.addWidget(remove_button)
+            row = {
+                "widget": row_widget,
+                "number": number_label,
+                "name": name_edit,
+                "age": age_edit,
+                "remove": remove_button,
+            }
+
+            def remove_row(_checked=False, target=row):
+                if target not in manual_person_rows:
+                    return
+                manual_person_rows.remove(target)
+                manual_people_layout.removeWidget(target["widget"])
+                target["widget"].deleteLater()
+                if not manual_person_rows:
+                    add_person_row()
+                refresh_person_row_numbers()
+                request_preview()
+
+            remove_button.clicked.connect(remove_row)
+            name_edit.textChanged.connect(request_preview)
+            age_edit.textChanged.connect(request_preview)
+            manual_person_rows.append(row)
+            manual_people_layout.insertWidget(max(1, manual_people_layout.count() - 1), row_widget)
+            refresh_person_row_numbers()
+            if focus:
+                name_edit.setFocus()
+            return row
+
+        def replace_person_rows(people: list[dict] | None = None, minimum_rows: int = 4):
+            for row in list(manual_person_rows):
+                manual_person_rows.remove(row)
+                manual_people_layout.removeWidget(row["widget"])
+                row["widget"].deleteLater()
+            source = list(people or [])
+            while len(source) < minimum_rows:
+                source.append({})
+            for person in source:
+                add_person_row(person)
+            refresh_person_row_numbers()
+            request_preview()
+
+        person_buttons = QHBoxLayout()
+        add_person_button = QPushButton("PŘIDAT", controls)
+        add_four_people_button = QPushButton("+4", controls)
+        clear_people_button = QPushButton("VYČISTIT", controls)
+        person_buttons.addWidget(add_person_button)
+        person_buttons.addWidget(add_four_people_button)
+        person_buttons.addWidget(clear_people_button)
+        controls_layout.addLayout(person_buttons)
+
         controls_layout.addWidget(QLabel("MODIFIKACE TISKU", controls))
         appearance_combo = QComboBox(controls)
         appearance_combo.addItem("Pirátské pozadí • průhledná tabulka", "pirate")
         appearance_combo.addItem("Bez pozadí • čistě bílé", "simple")
         controls_layout.addWidget(appearance_combo)
+        title_edit = QLineEdit("PIRÁTSKÉ VÝZVY", controls)
+        title_edit.setPlaceholderText("Nadpis kartičky")
+        controls_layout.addWidget(title_edit)
+        font_family_combo = QComboBox(controls)
+        for key, family in SPORTS_PRINT_FONT_FAMILIES.items():
+            font_family_combo.addItem(family["label"], key)
+        font_family_combo.setCurrentIndex(max(0, font_family_combo.findData("serif")))
+        font_style_combo = QComboBox(controls)
+        for key, style in SPORTS_PRINT_FONT_STYLES.items():
+            font_style_combo.addItem(style["label"], key)
+        font_style_combo.setCurrentIndex(max(0, font_style_combo.findData("bold")))
+        type_grid = QGridLayout()
+        type_grid.setContentsMargins(0, 0, 0, 0)
+        type_grid.setHorizontalSpacing(8)
+        type_grid.setVerticalSpacing(6)
+        type_grid.addWidget(QLabel("Písmo:"), 0, 0)
+        type_grid.addWidget(font_family_combo, 0, 1)
+        type_grid.addWidget(QLabel("Styl:"), 1, 0)
+        type_grid.addWidget(font_style_combo, 1, 1)
+        controls_layout.addLayout(type_grid)
         economical_print = QCheckBox("Šetrný tisk • světlé pirátské pozadí", controls)
         economical_print.setChecked(False)
         controls_layout.addWidget(economical_print)
         show_logo = QCheckBox("Zobrazit logo / pirátský znak", controls)
         show_logo.setChecked(True)
         controls_layout.addWidget(show_logo)
+        show_title = QCheckBox("Zobrazit nadpis kartičky", controls)
+        show_title.setChecked(True)
+        controls_layout.addWidget(show_title)
+        show_frames = QCheckBox("Zobrazit rámečky a linky", controls)
+        show_frames.setChecked(True)
+        controls_layout.addWidget(show_frames)
         cut_lines = QCheckBox("Zobrazit stříhací linky", controls)
         cut_lines.setChecked(True)
         controls_layout.addWidget(cut_lines)
+        sizes = QGridLayout()
+        sizes.setContentsMargins(0, 0, 0, 0)
+        sizes.setHorizontalSpacing(8)
+        sizes.setVerticalSpacing(6)
+        text_size = QSpinBox(controls)
+        text_size.setRange(7, 14)
+        text_size.setValue(10)
+        text_size.setSuffix(" bodů")
+        heading_size = QSpinBox(controls)
+        heading_size.setRange(16, 32)
+        heading_size.setValue(23)
+        heading_size.setSuffix(" bodů")
+        sizes.addWidget(QLabel("Text:"), 0, 0)
+        sizes.addWidget(text_size, 0, 1)
+        sizes.addWidget(QLabel("Nadpis:"), 1, 0)
+        sizes.addWidget(heading_size, 1, 1)
+        controls_layout.addLayout(sizes)
         note = QLabel(
-            "Všechny výzvy jsou společně na jedné A6. Výsledky zapisují vedoucí do prázdného pravého sloupce.",
+            "Všechny výzvy jsou společně na jedné A6. Řádků může být libovolně; prázdné řádky se netisknou, pokud je vyplněný aspoň jeden člověk.",
             controls,
         )
         note.setWordWrap(True)
@@ -496,7 +932,8 @@ class SportsDayPrintMixin:
         zoom_label.setStyleSheet("color:#d8c392;")
         controls_layout.addWidget(zoom_label)
         controls_layout.addStretch(1)
-        content.addWidget(controls)
+        controls_scroll.setWidget(controls)
+        content.addWidget(controls_scroll)
 
         preview_frame = QFrame(dialog)
         preview_frame.setObjectName("cardPrintPanel")
@@ -526,24 +963,89 @@ class SportsDayPrintMixin:
 
         state = {"sheets": []}
 
+        def current_card_people():
+            return [
+                {
+                    "name": row["name"].text().strip(),
+                    "age": row["age"].text().strip(),
+                }
+                for row in manual_person_rows
+            ]
+
+        def filled_person_count(people: list[dict]) -> int:
+            return sum(
+                1
+                for person in people
+                if str((person or {}).get("name") or "").strip()
+                or str((person or {}).get("age") or "").strip()
+            )
+
         def update_preview(*_args):
+            card_people = current_card_people()
             sheets = self._build_event_card_sheets(
                 cut_lines.isChecked(),
                 appearance_combo.currentData() == "pirate",
                 economical_print.isChecked(),
                 show_logo.isChecked(),
+                card_people,
+                title_edit.text().strip() or "PIRÁTSKÉ VÝZVY",
+                show_title.isChecked(),
+                show_frames.isChecked(),
+                text_size.value(),
+                heading_size.value(),
+                font_family_combo.currentData(),
+                font_style_combo.currentData(),
             )
             state["sheets"] = sheets
             preview.set_page_images(sheets, QSizeF(595, 842))
             zoom_label.setText(f"Měřítko náhledu: {preview.zoom_percent()} %")
+            count = filled_person_count(card_people)
+            if autofill_people.isChecked():
+                person_status.setText(f"Seznam z Oddílů: {count} lidí • {len(sheets)} listů A4. Jména i věk můžeš ještě upravit.")
+            else:
+                person_status.setText(f"Ručně: vyplněno {count} řádků z {len(manual_person_rows)} • {len(sheets)} listů A4.")
+            print_button.setEnabled(bool(sheets))
+            pdf_button.setEnabled(bool(sheets))
+
+        refresh_preview["callback"] = update_preview
 
         def update_zoom_label():
             zoom_label.setText(f"Měřítko náhledu: {preview.zoom_percent()} %")
 
+        def add_blank_rows(count: int = 1):
+            if autofill_people.isChecked():
+                autofill_people.setChecked(False)
+            for index in range(max(1, int(count))):
+                add_person_row(focus=index == 0)
+            request_preview()
+
+        def clear_people():
+            autofill_people.blockSignals(True)
+            autofill_people.setChecked(False)
+            autofill_people.blockSignals(False)
+            replace_person_rows([], 4)
+
+        def fill_people_from_roster(checked: bool):
+            if checked:
+                replace_person_rows(roster_people, 4)
+            else:
+                request_preview()
+
         cut_lines.toggled.connect(update_preview)
         economical_print.toggled.connect(update_preview)
         show_logo.toggled.connect(update_preview)
+        show_title.toggled.connect(lambda checked: (title_edit.setEnabled(checked), update_preview()))
+        show_frames.toggled.connect(update_preview)
         appearance_combo.currentIndexChanged.connect(update_preview)
+        font_family_combo.currentIndexChanged.connect(update_preview)
+        font_style_combo.currentIndexChanged.connect(update_preview)
+        title_edit.textChanged.connect(update_preview)
+        text_size.valueChanged.connect(update_preview)
+        heading_size.valueChanged.connect(update_preview)
+        autofill_people.toggled.connect(fill_people_from_roster)
+        add_person_button.clicked.connect(lambda: add_blank_rows(1))
+        add_four_people_button.clicked.connect(lambda: add_blank_rows(4))
+        clear_people_button.clicked.connect(clear_people)
         zoom_out.clicked.connect(lambda: (preview.set_zoom_percent(preview.zoom_percent() - 10), update_zoom_label()))
         zoom_in.clicked.connect(lambda: (preview.set_zoom_percent(preview.zoom_percent() + 10), update_zoom_label()))
         zoom_fit.clicked.connect(lambda: (preview.set_zoom_percent(None), update_zoom_label()))
@@ -575,7 +1077,7 @@ class SportsDayPrintMixin:
 
         print_button.clicked.connect(do_print)
         pdf_button.clicked.connect(save_pdf)
-        update_preview()
+        replace_person_rows([], 4)
         dialog.exec()
 
     def _show_print_options(self):
@@ -720,6 +1222,14 @@ class SportsDayPrintMixin:
         appearance_combo.addItem("Pirátské pozadí • přes celý papír", "pirate")
         appearance_combo.addItem("Bez pozadí • čistě bílý", "simple")
         title_edit = QLineEdit("PIRÁTSKÝ SPORTOVNÍ DEN", look_block)
+        font_family_combo = QComboBox(look_block)
+        for key, family in SPORTS_PRINT_FONT_FAMILIES.items():
+            font_family_combo.addItem(family["label"], key)
+        font_family_combo.setCurrentIndex(max(0, font_family_combo.findData("default")))
+        font_style_combo = QComboBox(look_block)
+        for key, style in SPORTS_PRINT_FONT_STYLES.items():
+            font_style_combo.addItem(style["label"], key)
+        font_style_combo.setCurrentIndex(max(0, font_style_combo.findData("regular")))
         economical_print = QCheckBox("Šetrný tisk • světlé pirátské pozadí", look_block)
         economical_print.setChecked(False)
         show_logo = QCheckBox("Zobrazit logo / pirátský znak", look_block)
@@ -734,11 +1244,15 @@ class SportsDayPrintMixin:
         look.addWidget(appearance_combo, 1, 1)
         look.addWidget(QLabel("Nadpis:"), 2, 0)
         look.addWidget(title_edit, 2, 1)
-        look.addWidget(economical_print, 3, 0, 1, 2)
-        look.addWidget(show_logo, 4, 0, 1, 2)
-        look.addWidget(show_title, 5, 0, 1, 2)
-        look.addWidget(show_summary, 6, 0, 1, 2)
-        look.addWidget(show_frames, 7, 0, 1, 2)
+        look.addWidget(QLabel("Písmo:"), 3, 0)
+        look.addWidget(font_family_combo, 3, 1)
+        look.addWidget(QLabel("Styl:"), 4, 0)
+        look.addWidget(font_style_combo, 4, 1)
+        look.addWidget(economical_print, 5, 0, 1, 2)
+        look.addWidget(show_logo, 6, 0, 1, 2)
+        look.addWidget(show_title, 7, 0, 1, 2)
+        look.addWidget(show_summary, 8, 0, 1, 2)
+        look.addWidget(show_frames, 9, 0, 1, 2)
         controls_layout.addWidget(look_block)
 
         page_block, page = make_block("NASTAVENÍ STRÁNKY")
@@ -846,6 +1360,8 @@ class SportsDayPrintMixin:
                 "show_title": show_title.isChecked(),
                 "show_summary": show_summary.isChecked(),
                 "show_frames": show_frames.isChecked(),
+                "font_family": font_family_combo.currentData(),
+                "font_style": font_style_combo.currentData(),
                 "font_size": font_size.value(),
                 "heading_size": heading_size.value(),
                 "margin_mm": margin_size.value(),
@@ -891,7 +1407,7 @@ class SportsDayPrintMixin:
 
         immediate_widgets = [
             scope_combo, category_combo, event_combo, order_combo, appearance_combo,
-            paper_combo, orientation_combo,
+            font_family_combo, font_style_combo, paper_combo, orientation_combo,
         ]
         for combo in immediate_widgets:
             combo.currentIndexChanged.connect(update_preview)
@@ -1288,23 +1804,33 @@ class SportsDayPrintMixin:
         base_font_size = max(8, min(16, int(options.get("font_size", 10))))
         section_heading_size = max(12, min(30, int(options.get("heading_size", 15))))
         main_heading_size = max(18, min(34, section_heading_size + 7))
+        font_family = _sports_print_font_family(
+            options.get("font_family", "default"),
+            getattr(self, "icons_path", ""),
+        )
+        font_style = _sports_print_font_style(options.get("font_style", "regular"))
+        body_font_css = font_family["body_css"]
+        heading_font_css = font_family["heading_css"]
+        body_weight = font_style["body_weight"]
+        heading_weight = font_style["heading_weight"]
+        css_font_style = font_style["css_style"]
         frame_border = "1px solid #d4c49f" if options.get("show_frames", True) else "0"
         header_border = "1px solid #9d7a41" if options.get("show_frames", True) else "0"
         coin = "<img src='pirate_coin' width='18' height='18' style='vertical-align:middle;'>"
         pieces = [
             "<html><head><meta charset='utf-8'><style>",
-            f"body{{font-family:'Segoe UI',Arial,sans-serif;color:#102631;{paper_background}font-size:{base_font_size}pt;}}",
+            f"body{{font-family:{body_font_css};color:#102631;{paper_background}font-size:{base_font_size}pt;font-weight:{body_weight};font-style:{css_font_style};}}",
             f".mast{{border:0;border-bottom:2px solid #b48636;background:{mast_background};padding:13px 15px;margin-bottom:8px;}}",
-            f"h1{{font-family:Georgia,serif;color:{main_title};font-size:{main_heading_size}pt;letter-spacing:1.5px;margin:0 0 4px 0;}}",
+            f"h1{{font-family:{heading_font_css};color:{main_title};font-size:{main_heading_size}pt;font-weight:{heading_weight};font-style:{css_font_style};letter-spacing:1.5px;margin:0 0 4px 0;}}",
             f".mast .sub{{color:{mast_subtitle};font-size:10pt;font-style:normal;}}",
             f".summary{{border:1px solid #b99a61;background:{panel_background};margin:0 0 15px 0;}}",
             f".summary td{{border:0;border-right:1px solid rgba(211,169,91,150);background:{panel_background};text-align:center;padding:8px 5px;}}",
-            f".summary strong{{color:{summary_value};font-family:Georgia,serif;font-size:14pt;}}",
+            f".summary strong{{color:{summary_value};font-family:{heading_font_css};font-size:14pt;font-weight:{heading_weight};font-style:{css_font_style};}}",
             f".summary span{{color:{summary_label};font-size:7.5pt;letter-spacing:0.7px;}}",
             f".sub{{color:{secondary_text};font-size:9pt;font-style:italic;margin-bottom:7px;}}",
             ".section{margin:13px 0 17px 0;}",
-            f"h2{{font-family:Georgia,serif;color:{section_text};background:{section_background};font-size:{section_heading_size}pt;border-left:0;border-bottom:2px solid #b08032;padding:5px 0;margin:0 0 8px 0;}}",
-            f"h3{{font-family:Georgia,serif;color:{group_text};font-size:11pt;border-bottom:1px solid rgba(215,195,151,155);padding-bottom:3px;margin:11px 0 5px 0;}}",
+            f"h2{{font-family:{heading_font_css};color:{section_text};background:{section_background};font-size:{section_heading_size}pt;font-weight:{heading_weight};font-style:{css_font_style};border-left:0;border-bottom:2px solid #b08032;padding:5px 0;margin:0 0 8px 0;}}",
+            f"h3{{font-family:{heading_font_css};color:{group_text};font-size:11pt;font-weight:{heading_weight};font-style:{css_font_style};border-bottom:1px solid rgba(215,195,151,155);padding-bottom:3px;margin:11px 0 5px 0;}}",
             "table{width:100%;border-collapse:collapse;margin:0 0 9px 0;}",
             f"th{{background:{table_header_background};color:{table_header_text};border:{header_border};padding:7px;text-align:left;font-size:{max(7, base_font_size - 1)}pt;letter-spacing:0.3px;}}",
             f"td{{color:{panel_text};border:{frame_border};padding:7px;background:{panel_background};}}",
@@ -1423,7 +1949,14 @@ class SportsDayPrintMixin:
             "<div class='footer'>Táborová paluba Mraveniště • výsledková listina sportovního dne</div></body></html>"
         )
         document = QTextDocument(self)
-        document.setDefaultFont(QFont("Segoe UI", base_font_size))
+        document.setDefaultFont(
+            _sports_print_qfont(
+                options.get("font_family", "default"),
+                base_font_size,
+                options.get("font_style", "regular"),
+                getattr(self, "icons_path", ""),
+            )
+        )
         paper_name = options.get("paper_name", "A4")
         orientation_name = options.get("orientation", "Na výšku")
         document.setPageSize(_sports_print_page_size(paper_name, orientation_name))

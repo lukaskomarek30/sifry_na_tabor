@@ -42,6 +42,10 @@ class FireFlicker:
         self.phase = (self.phase + 0.31) % (math.tau * 1000.0)
         self.widget.update()
 
+    def set_anchors(self, anchors):
+        self.anchors = tuple(anchors or ())
+        self.widget.update()
+
     def paint(self, painter: QPainter, scaled_width: int, scaled_height: int, crop_x=0, crop_y=0):
         if not self.anchors or scaled_width <= 0 or scaled_height <= 0:
             return

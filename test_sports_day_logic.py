@@ -1,12 +1,17 @@
+import math
 import unittest
+from unittest.mock import patch
 
 from sports_day import (
+    _category_age_range,
     _clean_name,
     _competition_ranks,
     _duplicate_named_item,
+    _parse_age_value,
     compute_event_points,
     parse_metric_value,
 )
+from sports_day_print import SportsDayPrintMixin, _sports_print_font_family, _sports_print_font_style
 
 
 class SportsDayScoringTests(unittest.TestCase):
@@ -58,6 +63,54 @@ class SportsDayScoringTests(unittest.TestCase):
         self.assertIsNotNone(_duplicate_named_item(items, " běh  NA  60 m "))
         self.assertIsNone(_duplicate_named_item(items, "Skok do dálky"))
         self.assertIsNone(_duplicate_named_item(items, "BĚH NA 60 M", exclude_id="run"))
+
+    def test_age_category_parser_supports_common_czech_ranges(self):
+        self.assertEqual(_parse_age_value("10 let"), 10)
+        self.assertEqual(_category_age_range("9-11 let"), (9, 11))
+        self.assertEqual(_category_age_range("9–11"), (9, 11))
+        self.assertEqual(_category_age_range("do 8 let"), (0.0, 8))
+        self.assertEqual(_category_age_range("12+"), (12, math.inf))
+
+
+class SportsDayEventCardTests(unittest.TestCase):
+    def test_print_font_helpers_keep_defaults_and_styles(self):
+        self.assertEqual(_sports_print_font_family(None)["qfont"], "Segoe UI")
+        self.assertEqual(_sports_print_font_family("serif")["qfont"], "Georgia")
+
+        bold_italic = _sports_print_font_style("bold_italic")
+        self.assertTrue(bold_italic["bold"])
+        self.assertTrue(bold_italic["italic"])
+        self.assertEqual(_sports_print_font_style("missing")["body_weight"], "400")
+
+    def test_event_card_roster_people_reads_age_from_groups(self):
+        class Dummy(SportsDayPrintMixin):
+            pass
+
+        entries = [
+            {
+                "name": "Anna Nová",
+                "group_name": "Modří",
+                "role": "Dítě",
+                "fields": {"Věk": "10", "Poznámka": "běhá ráda"},
+            },
+            {
+                "name": "Kapitán",
+                "group_name": "Modří",
+                "role": "Vedoucí",
+                "fields": {},
+            },
+        ]
+
+        with patch("sports_day_print.roster_entries", return_value=entries):
+            people = Dummy()._event_card_roster_people()
+
+        self.assertEqual(
+            people,
+            [
+                {"name": "Anna Nová", "age": "10", "group_name": "Modří", "role": "Dítě"},
+                {"name": "Kapitán", "age": "", "group_name": "Modří", "role": "Vedoucí"},
+            ],
+        )
 
 
 if __name__ == "__main__":

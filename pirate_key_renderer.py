@@ -1353,7 +1353,7 @@ def _make_fallback_key_data(cipher_name: str, module: Any) -> dict[str, Any] | N
     return _generic_data(cipher_name, mapping, f"Náhradní klíč vytvořený automaticky z tabulky {best_name}.")
 
 
-def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def _make_key_data_from_module_uncached(cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if module is None:
         return None
 
@@ -1418,23 +1418,9 @@ def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, 
     }
 
 
-def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
-    data = make_key_data_from_module(cipher_name, module, context)
-    if not data:
-        data = {
-            "title": f"Klíč šifry – {cipher_name}",
-            "subtitle": "Šifrátor Mraveniště – pirátský klíč",
-            "description": "Náhradní základní klíč, protože logika šifry neposkytla žádná data.",
-            "type": "generic",
-            "columns": 6,
-            "items": [(letter, letter) for letter in ALPHABET],
-        }
-    dialog = PirateKeyDialog(data, parent)
-    dialog.exec()
-    return True
 
 
-def save_key_png_for_module(cipher_name: str, module: Any, output_path: str, width: int = 1500, context: dict[str, Any] | None = None, print_mode: bool = False) -> bool:
+def _save_key_png_for_module_uncached(cipher_name: str, module: Any, output_path: str, width: int = 1500, context: dict[str, Any] | None = None, print_mode: bool = False) -> bool:
     data = make_key_data_from_module(cipher_name, module, context)
     if not data:
         return False
@@ -1513,7 +1499,7 @@ def _fast_module_key(module):
     return (path, mtime)
 
 try:
-    _ORIGINAL_MAKE_KEY_DATA_FAST = make_key_data_from_module
+    _ORIGINAL_MAKE_KEY_DATA_FAST = _make_key_data_from_module_uncached
 
     def make_key_data_from_module(cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cache_key = (str(cipher_name), _fast_module_key(module), _fast_context_key(context))
@@ -1530,9 +1516,9 @@ except Exception:
     pass
 
 try:
-    _ORIGINAL_SAVE_KEY_PNG_FAST = save_key_png_for_module
+    _ORIGINAL_SAVE_KEY_PNG_FAST = _save_key_png_for_module_uncached
 
-    def save_key_png_for_module(cipher_name: str, module: Any, output_path: str, width: int = 1500, context: dict[str, Any] | None = None, print_mode: bool = False) -> bool:
+    def _save_key_png_for_module_memory_cached(cipher_name: str, module: Any, output_path: str, width: int = 1500, context: dict[str, Any] | None = None, print_mode: bool = False) -> bool:
         cache_key = (str(cipher_name), _fast_module_key(module), _fast_context_key(context), int(width or 1500), bool(print_mode))
         cached_path = _GLOBAL_KEY_PNG_CACHE.get(cache_key)
         if cached_path and os.path.exists(cached_path):
@@ -1559,7 +1545,7 @@ except Exception:
 # Přednačtení klíče pro použití v main.py
 # ============================================================
 
-def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1400) -> bool:
+def _preload_key_cache_for_module_memory_cached(cipher_name: str, module: Any, context: dict[str, Any] | None = None, width: int = 1400) -> bool:
     """Předpřipraví cache klíče bez otevření dialogového okna.
 
     Funkce renderuje tiskovou i běžnou variantu klíče do dočasných souborů.
@@ -1583,106 +1569,6 @@ def preload_key_cache_for_module(cipher_name: str, module: Any, context: dict[st
 # Sestavení a vykreslení klíče proběhne až po inicializaci dialogu.
 # Uživatelské rozhraní tak zůstává responzivní i u náročnějších klíčů.
 
-class AsyncPirateKeyDialog(QDialog):
-    def __init__(self, cipher_name: str, module: Any, context: dict[str, Any] | None = None, parent: QWidget | None = None):
-        super().__init__(parent)
-        from PySide6.QtWidgets import QLabel
-        from PySide6.QtCore import QTimer
-
-        self.cipher_name = cipher_name
-        self.module = module
-        self.context = context
-        self.widget = None
-        self.scroll = None
-
-        self.setWindowTitle(f"Klíč šifry – {cipher_name}")
-        _resize_dialog_to_available_screen(self, parent, 1180, 820, 760, 540)
-
-        self.loading_label = QLabel("Připravuji klíč…\n\nOkno je otevřené hned, aby aplikace nepůsobila zaseknutě.", self)
-        self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.setStyleSheet("color: #f3d79a; background: #1c1208; font: bold 18px Georgia; padding: 40px;")
-
-        self.save_button = QPushButton("Uložit jako PNG")
-        self.close_button = QPushButton("Zavřít")
-        self.save_button.setEnabled(False)
-        self.save_button.clicked.connect(self.save_png)
-        self.close_button.clicked.connect(self.close)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(self.save_button)
-        buttons.addWidget(self.close_button)
-
-        self.layout_root = QVBoxLayout(self)
-        self.layout_root.addWidget(self.loading_label, 1)
-        self.layout_root.addLayout(buttons)
-        self.setStyleSheet("""
-            QDialog { background: #1c1208; }
-            QPushButton {
-                color: #f3d79a;
-                background: rgba(40, 28, 14, 230);
-                border: 1px solid #c89a4c;
-                border-radius: 8px;
-                padding: 8px 18px;
-                font: bold 13px Georgia;
-            }
-            QPushButton:hover { background: rgba(75, 48, 18, 240); }
-        """)
-
-        QTimer.singleShot(80, self._load_key)
-
-    def _load_key(self):
-        from PySide6.QtWidgets import QScrollArea
-        try:
-            data = make_key_data_from_module(self.cipher_name, self.module, self.context)
-            if not data:
-                data = {
-                    "title": f"Klíč šifry – {self.cipher_name}",
-                    "subtitle": "Šifrátor Mraveniště – pirátský klíč",
-                    "description": "Náhradní základní klíč, protože logika šifry neposkytla žádná data.",
-                    "type": "generic",
-                    "columns": 6,
-                    "items": [(letter, letter) for letter in ALPHABET],
-                }
-
-            self.widget = PirateKeyWidget(data)
-            self.scroll = QScrollArea(self)
-            self.scroll.setWidgetResizable(True)
-            self.scroll.setWidget(self.widget)
-
-            self.layout_root.removeWidget(self.loading_label)
-            self.loading_label.deleteLater()
-            self.layout_root.insertWidget(0, self.scroll, 1)
-            self.save_button.setEnabled(True)
-        except Exception as error:
-            self.loading_label.setText(f"Klíč se nepodařilo připravit:\n\n{error}")
-
-    def save_png(self) -> None:
-        if self.widget is None:
-            QMessageBox.information(self, "Klíč se připravuje", "Počkej, až se klíč dokončí.")
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Uložit klíč jako PNG", "klic_sifry.png", "PNG obrázek (*.png)")
-        if not path:
-            return
-        if not path.lower().endswith(".png"):
-            path += ".png"
-        pixmap = QPixmap(self.widget.size())
-        pixmap.fill(Qt.transparent)
-        self.widget.render(pixmap)
-        if pixmap.save(path, "PNG"):
-            QMessageBox.information(self, "Uloženo", f"Klíč byl uložen:\n{path}")
-        else:
-            QMessageBox.warning(self, "Chyba", "Klíč se nepodařilo uložit.")
-
-
-def show_key_dialog_nonblocking(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
-    dialog = AsyncPirateKeyDialog(cipher_name, module, context, parent)
-    dialog.exec()
-    return True
-
-# Původní veřejné API zůstává zachované a interně používá neblokující dialog.
-def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, context: dict[str, Any] | None = None) -> bool:
-    return show_key_dialog_nonblocking(parent, cipher_name, module, context)
 
 
 # ============================================================
@@ -1697,9 +1583,8 @@ def show_key_dialog(parent: QWidget | None, cipher_name: str, module: Any, conte
 
 _PERSISTENT_KEY_CACHE_FORMAT = 5
 _PERSISTENT_KEY_CACHE_APP_VERSION = "0.0.0"
-_PERSISTENT_ORIGINAL_SAVE_KEY_PNG = save_key_png_for_module
-_PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE = preload_key_cache_for_module
-_PERSISTENT_ORIGINAL_SHOW_KEY_DIALOG_NONBLOCKING = show_key_dialog_nonblocking
+_PERSISTENT_ORIGINAL_SAVE_KEY_PNG = _save_key_png_for_module_memory_cached
+_PERSISTENT_ORIGINAL_PRELOAD_KEY_CACHE = _preload_key_cache_for_module_memory_cached
 
 
 def _persistent_debug(message: str) -> None:

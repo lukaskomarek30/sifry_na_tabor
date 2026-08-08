@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 import unicodedata
 import uuid
 
@@ -36,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from app_paths import get_user_data_dir
 from fire_effects import FireFlicker
-from groups_data import roster_entries
+from groups_data import normalized_label, roster_entries
 from sports_day_print import SportsDayPrintMixin
 
 
@@ -79,6 +80,69 @@ def _duplicate_named_item(items: list, name: str, exclude_id=None):
         ),
         None,
     )
+
+
+def _parse_age_value(value):
+    text = str(value or "").strip().replace(",", ".")
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        age = float(match.group(0))
+    except ValueError:
+        return None
+    return age if math.isfinite(age) and age >= 0 else None
+
+
+def _category_age_range(category_name: str):
+    text = unicodedata.normalize("NFKC", str(category_name or "")).casefold()
+    numbers = [
+        float(raw.replace(",", "."))
+        for raw in re.findall(r"\d+(?:[,.]\d+)?", text)
+    ]
+    if not numbers:
+        return None
+    if len(numbers) >= 2:
+        low, high = sorted((numbers[0], numbers[1]))
+        return low, high
+    number = numbers[0]
+    if "+" in text or "od" in text:
+        return number, math.inf
+    if "do" in text or "max" in text:
+        return 0.0, number
+    return number, number
+
+
+def _roster_entry_age(entry: dict):
+    for label, value in (entry.get("fields") or {}).items():
+        if normalized_label(label) == "vek":
+            return _parse_age_value(value)
+    return None
+
+
+def _roster_entry_gender(entry: dict) -> str:
+    for label, value in (entry.get("fields") or {}).items():
+        if normalized_label(label) not in ("pohlavi", "gender"):
+            continue
+        text = unicodedata.normalize("NFKD", str(value or "")).casefold()
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        if text.startswith("f") or "div" in text or "hol" in text or "zen" in text:
+            return "F"
+        if text.startswith("m") or "klu" in text or "muz" in text or "chlap" in text:
+            return "M"
+    return "M"
+
+
+def _format_age_for_storage(age):
+    if age is None:
+        return ""
+    try:
+        number = float(age)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(number):
+        return ""
+    return int(number) if number.is_integer() else number
 
 
 def parse_metric_value(raw, metric: str):
@@ -673,6 +737,9 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         self.competitor_name_edit = QLineEdit(add_panel)
         self.competitor_name_edit.setPlaceholderText("Například Tomáš Novák")
         competitor_form.addLayout(self._field("Jméno piráta", self.competitor_name_edit, add_panel), 3)
+        self.competitor_age_edit = QLineEdit(add_panel)
+        self.competitor_age_edit.setPlaceholderText("např. 10")
+        competitor_form.addLayout(self._field("Věk", self.competitor_age_edit, add_panel), 1)
         self.competitor_category_combo = QComboBox(add_panel)
         competitor_form.addLayout(self._field("Kategorie", self.competitor_category_combo, add_panel), 2)
         self.competitor_gender_combo = QComboBox(add_panel)
@@ -683,6 +750,13 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         competitor_add_button.clicked.connect(self._add_competitor)
         self.competitor_name_edit.returnPressed.connect(self._add_competitor)
         competitor_form.addWidget(competitor_add_button, 0, Qt.AlignBottom)
+        import_roster_button = QPushButton("IMPORT Z ODDÍLŮ", add_panel)
+        import_roster_button.clicked.connect(self._import_competitors_from_groups)
+        competitor_form.addWidget(import_roster_button, 0, Qt.AlignBottom)
+        clear_competitors_button = QPushButton("SMAZAT POSÁDKU", add_panel)
+        clear_competitors_button.setObjectName("dangerButton")
+        clear_competitors_button.clicked.connect(self._clear_all_competitors)
+        competitor_form.addWidget(clear_competitors_button, 0, Qt.AlignBottom)
         add_layout.addLayout(competitor_form)
         add_layout.addStretch(1)
         top.addWidget(add_panel, 3, Qt.AlignTop)
@@ -708,8 +782,8 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         self.competitors_empty.setStyleSheet("color: #cbb98f; font-size: 13px; padding: 12px;")
         layout.addWidget(self.competitors_empty)
 
-        self.competitors_table = QTableWidget(0, 5, page)
-        self.competitors_table.setHorizontalHeaderLabels(("PIRÁT", "KATEGORIE", "POHLAVÍ", "VÝSLEDKY", ""))
+        self.competitors_table = QTableWidget(0, 6, page)
+        self.competitors_table.setHorizontalHeaderLabels(("PIRÁT", "VĚK", "KATEGORIE", "POHLAVÍ", "VÝSLEDKY", ""))
         self._configure_table(self.competitors_table)
         comp_header = self.competitors_table.horizontalHeader()
         comp_header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -717,12 +791,14 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         comp_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         comp_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         comp_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        comp_header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.competitors_table.cellClicked.connect(self._competitor_table_clicked)
         self.competitors_table.setMinimumHeight(185)
         self.competitors_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         layout.addWidget(self.competitors_table, 1)
 
         self.competitor_search_edit.textChanged.connect(self._refresh_competitors_table)
+        self.competitor_age_edit.textChanged.connect(self._competitor_age_changed)
         self.competitor_filter_category.currentIndexChanged.connect(self._refresh_competitors_table)
         self.competitor_filter_gender.currentIndexChanged.connect(self._refresh_competitors_table)
         return page
@@ -1034,6 +1110,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             self._refresh_categories_table()
             self._refresh_category_combos()
             self._refresh_roster_completer()
+            self._refresh_competitor_search_completer()
             self._refresh_competitors_table()
             self._refresh_results_controls()
             self._refresh_results_table()
@@ -1181,6 +1258,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             self.category_name_edit.selectAll()
             return
         self.categories.append({"id": _uid(), "name": name})
+        self._assign_competitors_to_age_categories()
         self.category_name_edit.clear()
         self._save_data()
         self.refresh_all()
@@ -1238,6 +1316,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             if category.get("id") == category_id:
                 category["name"] = name
                 break
+        self._assign_competitors_to_age_categories()
         self._save_data()
         self.refresh_all()
 
@@ -1276,12 +1355,14 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
 
         labels = []
         self._roster_completion_names = {}
+        self._roster_completion_entries = {}
         for entry in roster_entries():
             label = f"{entry['name']}  —  {entry['group_name']} • {entry['role']}"
             if label in self._roster_completion_names:
                 label += f" • {len(labels) + 1}"
             labels.append(label)
             self._roster_completion_names[label] = entry["name"]
+            self._roster_completion_entries[label] = entry
         completer = QCompleter(labels, self.competitor_name_edit)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
@@ -1291,9 +1372,211 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         self._roster_completer = completer
 
     def _use_roster_completion(self, label: str):
+        entry = self._roster_completion_entries.get(str(label), {})
         name = self._roster_completion_names.get(str(label), str(label))
         self.competitor_name_edit.setText(name)
         self.competitor_name_edit.setCursorPosition(len(name))
+        self._selected_roster_entry = entry
+        age = _roster_entry_age(entry)
+        if hasattr(self, "competitor_age_edit"):
+            self.competitor_age_edit.setText(str(_format_age_for_storage(age)))
+        category_id = self._category_id_for_age(age)
+        if hasattr(self, "competitor_category_combo"):
+            index = self.competitor_category_combo.findData(category_id)
+            if index >= 0:
+                self.competitor_category_combo.setCurrentIndex(index)
+        gender = _roster_entry_gender(entry)
+        if hasattr(self, "competitor_gender_combo"):
+            index = self.competitor_gender_combo.findData(gender)
+            if index >= 0:
+                self.competitor_gender_combo.setCurrentIndex(index)
+
+    def _refresh_competitor_search_completer(self):
+        if not hasattr(self, "competitor_search_edit"):
+            return
+        previous = getattr(self, "_competitor_search_completer", None)
+        if previous is not None:
+            previous.setWidget(None)
+            previous.deleteLater()
+
+        labels = []
+        self._competitor_search_names = {}
+        for competitor in sorted(self.competitors, key=lambda item: str(item.get("name") or "").casefold()):
+            name = str(competitor.get("name") or "").strip()
+            if not name:
+                continue
+            detail = " • ".join(
+                part for part in (
+                    self._category_name(competitor.get("category_id", "none")),
+                    GENDERS[competitor.get("gender", "M")]["singular"],
+                    f"{competitor.get('age')} let" if str(competitor.get("age") or "").strip() else "",
+                )
+                if part
+            )
+            label = f"{name}  —  {detail}" if detail else name
+            if label in self._competitor_search_names:
+                label += f" • {len(labels) + 1}"
+            labels.append(label)
+            self._competitor_search_names[label] = name
+        completer = QCompleter(labels, self.competitor_search_edit)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        completer.activated.connect(self._use_competitor_search_completion)
+        self.competitor_search_edit.setCompleter(completer)
+        self._competitor_search_completer = completer
+
+    def _use_competitor_search_completion(self, label: str):
+        name = self._competitor_search_names.get(str(label), str(label))
+        self.competitor_search_edit.setText(name)
+        self.competitor_search_edit.setCursorPosition(len(name))
+
+    def _competitor_age_changed(self):
+        if self._refreshing or not hasattr(self, "competitor_category_combo"):
+            return
+        age = _parse_age_value(self.competitor_age_edit.text())
+        category_id = self._category_id_for_age(age)
+        if category_id == "none":
+            return
+        index = self.competitor_category_combo.findData(category_id)
+        if index >= 0:
+            self.competitor_category_combo.setCurrentIndex(index)
+
+    def _category_id_for_age(self, age):
+        if age is None:
+            return "none"
+        for category in self.categories:
+            category_id = category.get("id")
+            if category_id == "none":
+                continue
+            age_range = _category_age_range(str(category.get("name") or ""))
+            if age_range is None:
+                continue
+            low, high = age_range
+            if low <= age <= high:
+                return category_id
+        return "none"
+
+    def _category_contains_age(self, category_id: str, age) -> bool:
+        if category_id == "none" or age is None:
+            return False
+        for category in self.categories:
+            if category.get("id") != category_id:
+                continue
+            age_range = _category_age_range(str(category.get("name") or ""))
+            if age_range is None:
+                return False
+            low, high = age_range
+            return low <= age <= high
+        return False
+
+    def _assign_competitors_to_age_categories(self) -> int:
+        changed = 0
+        for competitor in self.competitors:
+            age = _parse_age_value(competitor.get("age"))
+            if age is None:
+                continue
+            category_id = self._category_id_for_age(age)
+            if category_id == "none":
+                continue
+            current_category_id = competitor.get("category_id", "none")
+            if self._category_contains_age(current_category_id, age):
+                continue
+            if current_category_id != category_id:
+                competitor["category_id"] = category_id
+                changed += 1
+        return changed
+
+    def _find_imported_competitor(self, entry: dict, name: str):
+        person_id = entry.get("person_id")
+        group_id = entry.get("group_id")
+        if person_id:
+            for competitor in self.competitors:
+                if competitor.get("source") != "groups":
+                    continue
+                if competitor.get("source_person_id") == person_id:
+                    return competitor
+        name_key = _name_key(name)
+        if not name_key:
+            return None
+        for competitor in self.competitors:
+            if _name_key(competitor.get("name")) != name_key:
+                continue
+            if group_id and competitor.get("source_group_id") not in (None, group_id):
+                continue
+            return competitor
+        return None
+
+    def _import_competitors_from_groups(self):
+        entries = [
+            entry for entry in roster_entries()
+            if str(entry.get("role") or "") == "Dítě"
+        ]
+        if not entries:
+            QMessageBox.information(self, "Oddíly jsou prázdné", "V modulu Oddíly zatím nejsou žádné děti k importu.")
+            return
+
+        added = updated = skipped = without_age = without_category = 0
+        for entry in entries:
+            name = _clean_name(entry.get("name"))
+            if not name:
+                skipped += 1
+                continue
+            age = _roster_entry_age(entry)
+            if age is None:
+                without_age += 1
+            category_id = self._category_id_for_age(age)
+            if category_id == "none" and age is not None:
+                without_category += 1
+            gender = _roster_entry_gender(entry)
+            existing = self._find_imported_competitor(entry, name)
+            stored_age = _format_age_for_storage(age)
+            if existing is not None:
+                existing.update(
+                    {
+                        "name": name,
+                        "category_id": category_id,
+                        "gender": gender,
+                        "source": "groups",
+                        "source_group_id": entry.get("group_id"),
+                        "source_person_id": entry.get("person_id"),
+                        "source_group_name": entry.get("group_name"),
+                        "age": stored_age,
+                    }
+                )
+                updated += 1
+                continue
+            if self._duplicate_competitor(name, category_id) is not None:
+                skipped += 1
+                continue
+            self.competitors.append(
+                {
+                    "id": _uid(),
+                    "name": name,
+                    "category_id": category_id,
+                    "gender": gender,
+                    "source": "groups",
+                    "source_group_id": entry.get("group_id"),
+                    "source_person_id": entry.get("person_id"),
+                    "source_group_name": entry.get("group_name"),
+                    "age": stored_age,
+                }
+            )
+            added += 1
+
+        self._save_data()
+        self.refresh_all()
+        QMessageBox.information(
+            self,
+            "Import posádky dokončen",
+            (
+                f"Přidáno: {added}\n"
+                f"Aktualizováno: {updated}\n"
+                f"Přeskočeno kvůli duplicitě nebo prázdnému jménu: {skipped}\n"
+                f"Bez věku: {without_age}\n"
+                f"S věkem, ale bez odpovídající kategorie: {without_category}"
+            ),
+        )
 
     def _add_competitor(self):
         name = _clean_name(self.competitor_name_edit.text())
@@ -1301,6 +1584,10 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             self.competitor_name_edit.setFocus()
             return
         category_id = self.competitor_category_combo.currentData() or "none"
+        age = _parse_age_value(self.competitor_age_edit.text()) if hasattr(self, "competitor_age_edit") else None
+        selected_entry = getattr(self, "_selected_roster_entry", None)
+        if selected_entry and _clean_name(selected_entry.get("name")) != name:
+            selected_entry = None
         if self._duplicate_competitor(name, category_id) is not None:
             QMessageBox.warning(
                 self,
@@ -1311,15 +1598,27 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             self.competitor_name_edit.setFocus()
             self.competitor_name_edit.selectAll()
             return
-        self.competitors.append(
-            {
-                "id": _uid(),
-                "name": name,
-                "category_id": category_id,
-                "gender": self.competitor_gender_combo.currentData() or "M",
-            }
-        )
+        competitor = {
+            "id": _uid(),
+            "name": name,
+            "category_id": category_id,
+            "gender": self.competitor_gender_combo.currentData() or "M",
+            "age": _format_age_for_storage(age),
+        }
+        if selected_entry:
+            competitor.update(
+                {
+                    "source": "groups",
+                    "source_group_id": selected_entry.get("group_id"),
+                    "source_person_id": selected_entry.get("person_id"),
+                    "source_group_name": selected_entry.get("group_name"),
+                }
+            )
+        self.competitors.append(competitor)
         self.competitor_name_edit.clear()
+        if hasattr(self, "competitor_age_edit"):
+            self.competitor_age_edit.clear()
+        self._selected_roster_entry = None
         self._save_data()
         self.refresh_all()
 
@@ -1328,6 +1627,39 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         for event_results in self.results.values():
             if isinstance(event_results, dict):
                 event_results.pop(competitor_id, None)
+        self._save_data()
+        self.refresh_all()
+
+    def _clear_all_competitors(self):
+        if not self.competitors:
+            QMessageBox.information(self, "Posádka je prázdná", "Není co mazat.")
+            return
+        result_count = sum(
+            1
+            for event_results in self.results.values()
+            if isinstance(event_results, dict)
+            for competitor_id in event_results
+            if self._competitor_by_id(competitor_id) is not None
+        )
+        answer = QMessageBox.question(
+            self,
+            "Smazat celou posádku?",
+            (
+                "Opravdu chcete smazat celou posádku?\n\n"
+                f"Smaže se {len(self.competitors)} pirátů a {result_count} výsledků. "
+                "Výzvy a věkové kategorie zůstanou zachované. Tato akce nejde vrátit zpět."
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.competitors = []
+        self.results = {}
+        self._results_order_ids = {}
+        self._standings_order_ids = {}
+        self._bubble_highlight = set()
+        self._bubble_state = None
         self._save_data()
         self.refresh_all()
 
@@ -1368,19 +1700,24 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             )
             self.competitors_table.setCellWidget(row, 0, name_button)
 
+            age_item = self._readonly_item(str(competitor.get("age") or ""), Qt.AlignCenter)
+            age_item.setData(Qt.UserRole, competitor_id)
+            age_item.setToolTip("Kliknutím otevřeš všechny údaje piráta")
+            self.competitors_table.setItem(row, 1, age_item)
+
             category_item = self._readonly_item(
                 self._category_name(competitor.get("category_id", "none")), Qt.AlignCenter
             )
             category_item.setData(Qt.UserRole, competitor_id)
             category_item.setToolTip("Kliknutím otevřeš všechny údaje piráta")
-            self.competitors_table.setItem(row, 1, category_item)
+            self.competitors_table.setItem(row, 2, category_item)
 
             gender_item = self._readonly_item(
                 GENDERS[competitor.get("gender", "M")]["singular"], Qt.AlignCenter
             )
             gender_item.setData(Qt.UserRole, competitor_id)
             gender_item.setToolTip("Kliknutím otevřeš všechny údaje piráta")
-            self.competitors_table.setItem(row, 2, gender_item)
+            self.competitors_table.setItem(row, 3, gender_item)
 
             completed = sum(
                 1
@@ -1392,7 +1729,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             count_item.setFlags(count_item.flags() & ~Qt.ItemIsEditable)
             count_item.setData(Qt.UserRole, competitor_id)
             count_item.setToolTip("Kliknutím otevřeš a upravíš výsledky všech výzev")
-            self.competitors_table.setItem(row, 3, count_item)
+            self.competitors_table.setItem(row, 4, count_item)
 
             remove = QPushButton("ODSTRANIT", self.competitors_table)
             remove.setObjectName("dangerButton")
@@ -1401,7 +1738,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
             remove.clicked.connect(
                 lambda _checked=False, competitor_id=competitor_id: self._remove_competitor(competitor_id)
             )
-            self.competitors_table.setCellWidget(row, 4, remove)
+            self.competitors_table.setCellWidget(row, 5, remove)
         self.competitors_table.blockSignals(False)
         self.competitors_empty.setVisible(not rows)
         self.competitors_empty.setText(
@@ -1413,7 +1750,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         self.competitors_table.setMinimumHeight(185)
 
     def _competitor_table_clicked(self, row: int, column: int):
-        if column == 4:
+        if column == 5:
             return
         item = self.competitors_table.item(row, column)
         competitor_id = item.data(Qt.UserRole) if item is not None else None
@@ -1447,6 +1784,7 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
     def _apply_competitor_editor(self, competitor: dict, editor: QDialog):
         competitor_id = competitor.get("id")
         competitor["name"] = _clean_name(editor.name_edit.text())
+        competitor["age"] = _format_age_for_storage(_parse_age_value(editor.age_edit.text()))
         competitor["category_id"] = editor.category_combo.currentData() or "none"
         competitor["gender"] = editor.gender_combo.currentData() or "M"
         competitor["notes"] = editor.notes_edit.toPlainText().strip()
@@ -1530,6 +1868,9 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         editor.name_edit = QLineEdit(identity_panel)
         editor.name_edit.setText(str(competitor.get("name") or ""))
         editor.name_edit.selectAll()
+        editor.age_edit = QLineEdit(identity_panel)
+        editor.age_edit.setText(str(competitor.get("age") or ""))
+        editor.age_edit.setPlaceholderText("např. 10")
         editor.category_combo = QComboBox(identity_panel)
         for category in self.categories:
             editor.category_combo.addItem(str(category.get("name") or ""), category.get("id"))
@@ -1539,12 +1880,24 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         editor.gender_combo.addItem("Kluk", "M")
         editor.gender_combo.addItem("Holka", "F")
         editor.gender_combo.setCurrentIndex(max(0, editor.gender_combo.findData(competitor.get("gender", "M"))))
+
+        def editor_age_changed():
+            category_id = self._category_id_for_age(_parse_age_value(editor.age_edit.text()))
+            if category_id == "none":
+                return
+            index = editor.category_combo.findData(category_id)
+            if index >= 0:
+                editor.category_combo.setCurrentIndex(index)
+
+        editor.age_edit.textChanged.connect(editor_age_changed)
         identity.addLayout(self._field("JMÉNO PIRÁTA", editor.name_edit, identity_panel), 1, 0)
-        identity.addLayout(self._field("VĚKOVÁ KATEGORIE", editor.category_combo, identity_panel), 1, 1)
-        identity.addLayout(self._field("POHLAVÍ", editor.gender_combo, identity_panel), 1, 2)
+        identity.addLayout(self._field("VĚK", editor.age_edit, identity_panel), 1, 1)
+        identity.addLayout(self._field("VĚKOVÁ KATEGORIE", editor.category_combo, identity_panel), 1, 2)
+        identity.addLayout(self._field("POHLAVÍ", editor.gender_combo, identity_panel), 1, 3)
         identity.setColumnStretch(0, 3)
-        identity.setColumnStretch(1, 2)
-        identity.setColumnStretch(2, 1)
+        identity.setColumnStretch(1, 1)
+        identity.setColumnStretch(2, 2)
+        identity.setColumnStretch(3, 1)
 
         editor.notes_edit = QTextEdit(identity_panel)
         editor.notes_edit.setPlaceholderText("Například silné stránky, zdravotní omezení nebo poznámka vedoucího…")
@@ -1552,8 +1905,8 @@ class SportsDayDialog(QDialog, SportsDayPrintMixin):
         editor.notes_edit.setFixedHeight(78)
         notes_label = QLabel("POZNÁMKA K PIRÁTOVI", identity_panel)
         notes_label.setStyleSheet("color: #cdbb91; font-size: 11px; font-weight: bold;")
-        identity.addWidget(notes_label, 2, 0, 1, 3)
-        identity.addWidget(editor.notes_edit, 3, 0, 1, 3)
+        identity.addWidget(notes_label, 2, 0, 1, 4)
+        identity.addWidget(editor.notes_edit, 3, 0, 1, 4)
         outer.addWidget(identity_panel)
 
         results_heading = QHBoxLayout()

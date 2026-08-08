@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
     QFileDialog,
+    QFrame,
     QSpinBox,
     QAbstractScrollArea,
     QAbstractSpinBox,
@@ -84,6 +85,13 @@ from sports_day import SportsDayDialog
 from diploma import DiplomaDialog
 from groups import GroupsDialog
 from fire_effects import PirateModuleDialog
+from user_data_backup import (
+    UserDataBackupError,
+    default_backup_filename,
+    export_user_data_zip,
+    import_user_data_zip,
+    inspect_user_data_backup,
+)
 
 
 _RANDOM_EASY_CIPHER_NAME = "Náhodná lehká šifra"
@@ -823,53 +831,6 @@ def _print_options_get_key_image_path(self):
     return ""
 
 
-def _print_options_key_html(self):
-    cipher_name = self.selected_cipher or "Nevybraná šifra"
-    safe_cipher_name = _print_options_escape_html(cipher_name)
-
-    parts = [f"<p><b>Vybraná šifra:</b> {safe_cipher_name}</p>"]
-
-    # U Caesarovy šifry vytiskneme opravdu klíč: směr, posun a přemapování abecedy.
-    try:
-        is_caesar = bool(hasattr(self, "is_caesar_selected") and self.is_caesar_selected())
-    except Exception:
-        is_caesar = False
-
-    if is_caesar:
-        shift = int(self.get_caesar_shift()) if hasattr(self, "get_caesar_shift") else 3
-        direction = self.get_caesar_direction() if hasattr(self, "get_caesar_direction") else "dopredu"
-        signed_shift = -shift if direction == "dozadu" else shift
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        shifted = alphabet[signed_shift % 26:] + alphabet[:signed_shift % 26]
-        direction_label = "DOZADU" if direction == "dozadu" else "DOPŘEDU"
-        parts.append(f"<p><b>Směr:</b> {direction_label}<br><b>Posun:</b> {shift}</p>")
-        parts.append("<table border='1' cellspacing='0' cellpadding='5' style='border-collapse:collapse; width:100%;'>")
-        parts.append("<tr><td><b>Původní abeceda</b></td><td style='font-family:monospace;'>" + alphabet + "</td></tr>")
-        parts.append("<tr><td><b>Posunutá abeceda</b></td><td style='font-family:monospace;'>" + shifted + "</td></tr>")
-        parts.append("</table>")
-        return "".join(parts)
-
-    # U Zlomků vypíšeme číselný klíč podle tabulky 1/1 až 5/5.
-    if cipher_name == "Zlomky":
-        groups = ["ABCDE", "FGHIJ", "KLMNO", "PQRST", "UVXYZ"]
-        parts.append("<table border='1' cellspacing='0' cellpadding='5' style='border-collapse:collapse; width:100%;'>")
-        for denominator, letters in enumerate(groups, start=1):
-            row = []
-            for numerator, letter in enumerate(letters, start=1):
-                row.append(f"<td><b>{letter}</b><br>{numerator}/{denominator}</td>")
-            parts.append("<tr>" + "".join(row) + "</tr>")
-        parts.append("</table>")
-        return "".join(parts)
-
-    image_path = _print_options_get_key_image_path(self)
-    if image_path:
-        safe_path = _print_options_escape_html(image_path)
-        parts.append(f"<p class='key-image-box'><img src='cipher_key_image' width='{min(120, _print_current_key_image_width(self, 120))}'></p>")
-
-    parts.append("<p style='color:#555;'>Pro tuto šifru se tiskne název a dostupný obrázek/ikona klíče. "
-                 "Pokud chceš tisknout vlastní klíč, vlož do složky icons obrázek například ve tvaru "
-                 "<b>název_ikony_klic.png</b>.</p>")
-    return "".join(parts)
 
 
 def _print_options_dialog(self, has_input: bool, has_output: bool):
@@ -1265,7 +1226,7 @@ def _print_image_black_on_white(image: QImage) -> QImage:
     return result
 
 
-def _print_options_build_document(self, options: dict, drawn_widget, paper_name="A4", orientation_name="Na výšku", settings=None):
+def _print_options_build_document_base(self, options: dict, drawn_widget, paper_name="A4", orientation_name="Na výšku", settings=None):
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QTextDocument
 
@@ -1477,7 +1438,7 @@ def _print_current_result_with_options(self):
 
 SifratorSkinWidget.print_current_result = _print_current_result_with_options
 SifratorSkinWidget.print_options_dialog = _print_options_dialog
-SifratorSkinWidget.print_options_build_document = _print_options_build_document
+SifratorSkinWidget.print_options_build_document = _print_options_build_document_base
 
 
 # ============================================================
@@ -2093,69 +2054,6 @@ def _fixed_key_image_file_url(path: str) -> str:
         return "file:///" + str(path).replace("\\", "/")
 
 
-# Přepíšeme tiskový HTML blok klíče tak, aby nepoužíval jen ikonu šifry,
-# ale skutečný pirátský generátor z pirate_key_renderer.py.
-_ORIGINAL_PRINT_OPTIONS_KEY_HTML_FIXED = _print_options_key_html
-
-
-def _print_options_key_html(self):
-    cipher_name = self.selected_cipher or "Nevybraná šifra"
-    parts = [f"<p><b>Vybraná šifra:</b> {_print_options_escape_html(cipher_name)}</p>"]
-
-    renderer = get_pirate_key_renderer()
-    logic_module = _fixed_get_logic_module_for_print_key(self)
-
-    if renderer is not None and logic_module is not None:
-        try:
-            # Renderer si data vezme buď z get_key_data(), nebo nouzově z get_key_table().
-            data = None
-            if hasattr(renderer, "make_key_data_from_module"):
-                key_context = self.get_current_key_context_for_cipher(cipher_name) if hasattr(self, "get_current_key_context_for_cipher") else None
-                data = renderer.make_key_data_from_module(cipher_name, logic_module, key_context)
-
-            if data:
-                import tempfile
-                safe_name = "".join(ch if ch.isalnum() else "_" for ch in cipher_name).strip("_") or "klic"
-                image_path = os.path.join(tempfile.gettempdir(), f"sifrator_klic_{safe_name}.png")
-
-                saved = False
-                if hasattr(renderer, "save_key_png_for_module"):
-                    saved = bool(renderer.save_key_png_for_module(cipher_name, logic_module, image_path, width=1400, context=key_context, print_mode=True))
-                elif hasattr(renderer, "PirateKeyWidget"):
-                    data = dict(data)
-                    data["_print_mode"] = True
-                    widget = renderer.PirateKeyWidget(data)
-                    widget.resize(1400, widget.estimate_height(1400) if hasattr(widget, "estimate_height") else 900)
-                    pixmap = QPixmap(widget.size())
-                    pixmap.fill(QColor("#ffffff"))
-                    widget.render(pixmap)
-                    saved = pixmap.save(image_path, "PNG")
-
-                if saved and os.path.exists(image_path):
-                    url = _fixed_key_image_file_url(image_path)
-                    parts.append(
-                        "<p class='key-image-box' style='margin-top:10px;'>"
-                        f"<img src='{_print_options_escape_html(url)}' width='{_print_current_key_image_width(self)}'>"
-                        "</p>"
-                    )
-                    return "".join(parts)
-        except Exception as error:
-            parts.append(
-                "<p style='color:#8a2d1f;'><b>Klíč se nepodařilo vložit do tisku:</b><br>"
-                + _print_options_escape_html(str(error))
-                + "</p>"
-            )
-            return "".join(parts)
-
-    # Původní speciální klíče jako Caesar / Zlomky necháme jako zálohu.
-    try:
-        return _ORIGINAL_PRINT_OPTIONS_KEY_HTML_FIXED(self)
-    except Exception:
-        parts.append(
-            "<p style='color:#555;'>Pro tuto šifru zatím není připravený generovaný klíč. "
-            "Do logiky šifry doplň funkci <b>get_key_data()</b>.</p>"
-        )
-        return "".join(parts)
 
 
 def get_binary_squares_widget_class():
@@ -2636,6 +2534,9 @@ class SifratorWindow(QMainWindow):
         if route == "history":
             self.show_history_window()
             return
+        if route == "backup":
+            self.show_user_data_backup_window()
+            return
         if route == "sports":
             self.show_sports_day_window()
             return
@@ -2679,7 +2580,7 @@ class SifratorWindow(QMainWindow):
             self._groups_dialog = dialog
         else:
             dialog.refresh_data()
-        self._show_embedded_dialog_page(dialog, "Oddíly")
+        self._show_embedded_dialog_page(dialog, "Oddíly/Ubytování")
 
     def show_diploma_window(self, diploma_kind=None):
         dialog = getattr(self, "_diploma_dialog", None)
@@ -3064,32 +2965,12 @@ def _print_cache_get_drawn_result_image(self, drawn_widget=None, force: bool = F
         return QImage()
 
 
-# Přepíšeme tiskový HTML klíč tak, aby nejdřív použil přednačtený PNG z cache.
-def _print_options_key_html(self):
-    cipher_name = self.selected_cipher or "Nevybraná šifra"
-    parts = [f"<p><b>Vybraná šifra:</b> {_print_options_escape_html(cipher_name)}</p>"]
-
-    image_path = _print_cache_get_key_image_path(self, force=False, print_mode=True)
-    if image_path and os.path.exists(image_path):
-        url = _fixed_key_image_file_url(image_path) if '_fixed_key_image_file_url' in globals() else image_path
-        parts.append(
-            "<p class='key-image-box' style='margin-top:10px;'>"
-            f"<img src='{_print_options_escape_html(url)}' width='{_print_current_key_image_width(self)}'>"
-            "</p>"
-        )
-        return "".join(parts)
-
-    try:
-        return _ORIGINAL_PRINT_OPTIONS_KEY_HTML_FIXED(self)
-    except Exception:
-        parts.append("<p style='color:#555;'>Klíč se nepodařilo připravit.</p>")
-        return "".join(parts)
 
 
 # Cache celého QTextDocumentu pro první náhled. Těžké obrázky jsou už uložené,
 # takže otevření okna TISK nemusí znovu generovat klíč ani kreslenou šifru.
 try:
-    _PRINT_PRELOAD_ORIGINAL_BUILD_DOCUMENT = _print_options_build_document
+    _PRINT_PRELOAD_ORIGINAL_BUILD_DOCUMENT = _print_options_build_document_base
 
     def _print_options_build_document(self, options: dict, drawn_widget, paper_name="A4", orientation_name="Na výšku", settings=None):
         settings = settings or {}
@@ -3126,99 +3007,18 @@ try:
 except Exception:
     pass
 
-
-def _print_cache_default_options(self):
-    has_input = bool(self.input_text.toPlainText().strip()) if hasattr(self, "input_text") else False
-    has_output = False
-    try:
-        drawn_widget = self.print_find_visible_draw_widget() if hasattr(self, "print_find_visible_draw_widget") else None
-        has_output = bool(
-            (hasattr(self, "output_text") and self.output_text.isVisible() and self.output_text.toPlainText().strip())
-            or drawn_widget is not None
-        )
-    except Exception:
-        has_output = bool(hasattr(self, "output_text") and self.output_text.toPlainText().strip())
-    return {
-        "key": True,
-        "story": False,
-        "input": has_input,
-        "output": has_output,
-    }
+try:
+    SifratorSkinWidget.print_options_build_document = _print_options_build_document
+except Exception:
+    pass
 
 
-def _print_cache_default_settings(self):
-    return {
-        "show_headings": True,
-        "show_frames": True,
-        "show_cipher_name": False,
-        "key_title": "Klíč šifry",
-        "story_title": "Vlastní text / příběh",
-        "input_title": "Text k zašifrování",
-        "output_title": "Zašifrovaný text",
-        "story_text": "",
-        "heading_size": 20,
-        "key_font_size": 12,
-        "key_scale": 100,
-        "story_font_size": 12,
-        "input_font_size": 13,
-        "output_font_size": 13,
-        "cipher_scale": 85,
-    }
 
 
-def _print_cache_preload_now(self, token=None):
-    if token is not None and token != getattr(self, "_print_cache_preload_token", None):
-        return
-    if not getattr(self, "selected_cipher", None):
-        return
-
-    drawn_widget = None
-    try:
-        drawn_widget = self.print_find_visible_draw_widget() if hasattr(self, "print_find_visible_draw_widget") else None
-    except Exception:
-        drawn_widget = None
-
-    # 1) Tiskový klíč – bez pergamenu, černobílý.
-    try:
-        _print_cache_get_key_image_path(self, force=False, print_mode=True)
-    except Exception as error:
-        print(f"CHYBA přednačítání tiskového klíče: {error}")
-
-    # 2) Normální klíč – jen pro zahřátí rendereru a symbolové cache.
-    try:
-        _print_cache_get_key_image_path(self, force=False, print_mode=False)
-    except Exception:
-        pass
-
-    # 3) Kreslený výsledek pro tisk – černě na bílo.
-    try:
-        if drawn_widget is not None:
-            _print_cache_get_drawn_result_image(self, drawn_widget, force=False)
-    except Exception as error:
-        print(f"CHYBA přednačítání grafické šifry: {error}")
-
-    # 4) Základní dokument náhledu tisku s výchozími volbami.
-    try:
-        if '_PRINT_PRELOAD_ORIGINAL_BUILD_DOCUMENT' in globals():
-            _print_options_build_document(
-                self,
-                _print_cache_default_options(self),
-                drawn_widget,
-                paper_name="A4",
-                orientation_name="Na výšku",
-                settings=_print_cache_default_settings(self),
-            )
-    except Exception as error:
-        print(f"CHYBA přednačítání náhledu tisku: {error}")
 
 
-def _schedule_print_cache_preload(self, delay_ms: int = 350):
-    try:
-        self._print_cache_preload_token = int(getattr(self, "_print_cache_preload_token", 0)) + 1
-        token = self._print_cache_preload_token
-        QTimer.singleShot(delay_ms, lambda: _print_cache_preload_now(self, token))
-    except Exception:
-        pass
+
+
 
 
 def _clear_print_preload_cache(self):
@@ -8793,6 +8593,468 @@ SifratorWindow.show_batch_encrypt_window = _window_show_batch_encrypt_window
 SifratorWindow.show_camp_planner_window = _window_show_camp_planner_window
 SifratorWindow.manual_check_updates = _window_manual_check_updates
 SifratorWindow.check_updates_after_start = _window_check_updates_after_start
+
+
+def _user_data_backup_default_dir() -> str:
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    if os.path.isdir(desktop):
+        return desktop
+    home = os.path.expanduser("~")
+    if os.path.isdir(home):
+        return home
+    return get_user_data_dir()
+
+
+def _user_data_format_size(byte_count: int) -> str:
+    size = float(max(0, int(byte_count or 0)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+class UserDataBackupDialog(PirateModuleDialog):
+    """Pirátský panel pro export a import uživatelských dat."""
+
+    def __init__(self, owner_window):
+        super().__init__(
+            owner_window,
+            "menu_BG.png",
+            (
+                (0.058, 0.404, 0.48),
+                (0.949, 0.838, 1.25),
+            ),
+        )
+        self.owner_window = owner_window
+        self.setWindowTitle("Záloha uživatelských dat")
+        self.resize(920, 560)
+        self.setMinimumSize(760, 500)
+        self.setStyleSheet(self.styleSheet() + """
+            QLabel#backupTitle {
+                color: #f4dea4;
+                font-family: Georgia;
+                font-size: 26px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QLabel#backupSubtitle {
+                color: #d8c59a;
+                font-family: Georgia;
+                font-size: 13px;
+                font-style: italic;
+            }
+            QLabel#backupSmall {
+                color: #cdb98d;
+                font-family: Georgia;
+                font-size: 11px;
+            }
+            QFrame#backupSummary {
+                background-color: rgba(3, 18, 27, 82);
+                border: 1px solid rgba(211, 162, 78, 145);
+                border-radius: 11px;
+            }
+            QLabel#backupSummaryName {
+                color: #d4aa64;
+                font-family: Georgia;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QLabel#backupSummaryValue {
+                color: #f1e4c4;
+                font-family: Georgia;
+                font-size: 11px;
+            }
+            QFrame#backupPanel {
+                background-color: rgba(3, 18, 27, 92);
+                border: 1px solid rgba(211, 162, 78, 175);
+                border-radius: 10px;
+            }
+            QLabel#backupBadge {
+                min-width: 58px;
+                min-height: 58px;
+                max-width: 58px;
+                max-height: 58px;
+                color: #fff0bd;
+                background-color: rgba(14, 73, 83, 185);
+                border: 1px solid rgba(238, 191, 94, 225);
+                border-radius: 29px;
+                font-family: Georgia;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QLabel#backupPanelTitle {
+                color: #f4dea4;
+                font-family: Georgia;
+                font-size: 17px;
+                font-weight: bold;
+            }
+            QLabel#backupPanelText {
+                color: #ead8b3;
+                font-family: Georgia;
+                font-size: 12px;
+            }
+            QLabel#backupPanelItem {
+                color: #d9c69c;
+                font-family: Georgia;
+                font-size: 11px;
+            }
+            QFrame#backupNote {
+                background-color: rgba(5, 24, 33, 96);
+                border: 1px solid rgba(205, 159, 78, 130);
+                border-radius: 9px;
+            }
+            QPushButton#backupPrimary {
+                min-height: 38px;
+                color: #fff0bd;
+                background-color: rgba(14, 73, 83, 205);
+                border: 1px solid rgba(238, 191, 94, 230);
+                border-radius: 9px;
+                padding: 9px 18px;
+                font-family: Georgia;
+                font-weight: bold;
+            }
+            QPushButton#backupPrimary:hover {
+                background-color: rgba(20, 96, 105, 235);
+                border: 2px solid #f3d79a;
+            }
+            QPushButton#backupDanger {
+                min-height: 38px;
+                color: #f0c2ae;
+                background-color: rgba(95, 30, 36, 172);
+                border: 1px solid #a95a55;
+                border-radius: 9px;
+                padding: 9px 18px;
+                font-family: Georgia;
+                font-weight: bold;
+            }
+            QPushButton#backupDanger:hover {
+                color: #ffe3d8;
+                background-color: rgba(128, 40, 46, 220);
+                border: 2px solid #f0a39b;
+            }
+            QPushButton#backupSecondary {
+                min-height: 32px;
+                color: #f1e4c4;
+                background-color: rgba(7, 42, 52, 168);
+                border: 1px solid rgba(205, 159, 78, 185);
+                border-radius: 8px;
+                padding: 7px 14px;
+                font-family: Georgia;
+                font-weight: bold;
+            }
+            QPushButton#backupSecondary:hover {
+                color: #fff0bd;
+                background-color: rgba(12, 60, 70, 214);
+                border: 2px solid #f3d79a;
+            }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(34, 26, 34, 26)
+        root.setSpacing(12)
+
+        title = QLabel("ZÁLOHA UŽIVATELSKÝCH DAT", self)
+        title.setObjectName("backupTitle")
+        title.setAlignment(Qt.AlignCenter)
+        root.addWidget(title)
+
+        subtitle = QLabel("Plán, historie, přílohy, oddíly, ubytování a sportovní den v jednom ZIPu.", self)
+        subtitle.setObjectName("backupSubtitle")
+        subtitle.setAlignment(Qt.AlignCenter)
+        root.addWidget(subtitle)
+
+        summary = QFrame(self)
+        summary.setObjectName("backupSummary")
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(16, 9, 16, 9)
+        summary_layout.setSpacing(18)
+        self.path_value_label = self._summary_value(summary, "ÚLOŽIŠTĚ")
+        self.file_count_value_label = self._summary_value(summary, "SOUBORŮ")
+        self.size_value_label = self._summary_value(summary, "VELIKOST")
+        summary_layout.addWidget(self.path_value_label, 1)
+        summary_layout.addWidget(self.file_count_value_label)
+        summary_layout.addWidget(self.size_value_label)
+        root.addWidget(summary)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(14)
+        actions.addWidget(self._action_panel(
+            "EXPORT ZIP",
+            "Uloží aktuální uživatelská data do jednoho přenositelného souboru.",
+            ("Plán tábora", "Oddíly a ubytování", "Sportovní den", "Historie zpráv"),
+            "ZIP",
+            "VYTVOŘIT ZÁLOHU",
+            self._export_clicked,
+            "backupPrimary",
+        ))
+        actions.addWidget(self._action_panel(
+            "IMPORT ZIP",
+            "Obnoví data ze zálohy a před přepsáním uloží bezpečnostní kopii.",
+            ("Kontrola zálohy", "Bezpečnostní kopie", "Obnova dat", "Nový start aplikace"),
+            "IN",
+            "OBNOVIT ZE ZÁLOHY",
+            self._import_clicked,
+            "backupDanger",
+        ))
+        root.addLayout(actions)
+
+        note = QFrame(self)
+        note.setObjectName("backupNote")
+        note_layout = QHBoxLayout(note)
+        note_layout.setContentsMargins(14, 9, 14, 9)
+        note_text = QLabel(
+            "Import před přepsáním dat automaticky uloží bezpečnostní kopii do složky aplikace.",
+            note,
+        )
+        note_text.setObjectName("backupSmall")
+        note_text.setWordWrap(True)
+        note_text.setAlignment(Qt.AlignCenter)
+        note_layout.addWidget(note_text)
+        root.addWidget(note)
+        root.addStretch(1)
+
+        bottom = QHBoxLayout()
+        open_folder = QPushButton("OTEVŘÍT SLOŽKU DAT", self)
+        open_folder.setObjectName("backupSecondary")
+        open_folder.clicked.connect(self._open_data_folder)
+        bottom.addWidget(open_folder)
+        bottom.addStretch(1)
+        close_button = QPushButton("ZAVŘÍT", self)
+        close_button.setObjectName("backupSecondary")
+        close_button.clicked.connect(self.close)
+        bottom.addWidget(close_button)
+        root.addLayout(bottom)
+
+        self._refresh_summary()
+        self.apply_pirate_glass()
+
+    def _summary_value(self, parent, label: str):
+        box = QWidget(parent)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        name = QLabel(label, box)
+        name.setObjectName("backupSummaryName")
+        name.setAlignment(Qt.AlignCenter)
+        value = QLabel("", box)
+        value.setObjectName("backupSummaryValue")
+        value.setAlignment(Qt.AlignCenter)
+        value.setWordWrap(True)
+        layout.addWidget(name)
+        layout.addWidget(value)
+        box.value_label = value
+        return box
+
+    def _action_panel(
+        self,
+        title: str,
+        text: str,
+        items,
+        badge_text: str,
+        button_text: str,
+        callback,
+        button_object_name: str,
+    ):
+        panel = QFrame(self)
+        panel.setObjectName("backupPanel")
+        panel.setMinimumHeight(250)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(10)
+        badge = QLabel(badge_text, panel)
+        badge.setObjectName("backupBadge")
+        badge.setAlignment(Qt.AlignCenter)
+        layout.addWidget(badge, 0, Qt.AlignCenter)
+        title_label = QLabel(title, panel)
+        title_label.setObjectName("backupPanelTitle")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        text_label = QLabel(text, panel)
+        text_label.setObjectName("backupPanelText")
+        text_label.setWordWrap(True)
+        text_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(text_label)
+        item_box = QWidget(panel)
+        item_layout = QGridLayout(item_box)
+        item_layout.setContentsMargins(6, 2, 6, 2)
+        item_layout.setHorizontalSpacing(10)
+        item_layout.setVerticalSpacing(5)
+        for index, item in enumerate(tuple(items or ())):
+            item_label = QLabel(f"• {item}", item_box)
+            item_label.setObjectName("backupPanelItem")
+            item_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            item_layout.addWidget(item_label, index // 2, index % 2)
+        layout.addWidget(item_box)
+        layout.addStretch(1)
+        button = QPushButton(button_text, panel)
+        button.setObjectName(button_object_name)
+        button.clicked.connect(callback)
+        layout.addWidget(button)
+        return panel
+
+    def _refresh_summary(self):
+        data_dir = get_user_data_dir()
+        file_count = 0
+        total_bytes = 0
+        try:
+            for current_root, _dirs, files in os.walk(data_dir):
+                for file_name in files:
+                    path = os.path.join(current_root, file_name)
+                    file_count += 1
+                    try:
+                        total_bytes += os.path.getsize(path)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        self.path_value_label.value_label.setText(data_dir)
+        self.file_count_value_label.value_label.setText(str(file_count))
+        self.size_value_label.value_label.setText(_user_data_format_size(total_bytes))
+
+    def _export_clicked(self):
+        if self.owner_window is not None:
+            self.owner_window.export_user_data_backup()
+        self._refresh_summary()
+
+    def _import_clicked(self):
+        if self.owner_window is not None:
+            self.owner_window.import_user_data_backup()
+        self._refresh_summary()
+
+    def _open_data_folder(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(get_user_data_dir()))
+
+
+def _window_build_user_data_menu(self):
+    self._user_data_menu_ready = True
+
+
+def _window_export_user_data_backup(self):
+    default_path = os.path.join(_user_data_backup_default_dir(), default_backup_filename(APP_VERSION))
+    path, _filter = QFileDialog.getSaveFileName(
+        self,
+        "Exportovat uživatelská data",
+        default_path,
+        "Záloha Šifrátoru (*.zip);;Všechny soubory (*)",
+    )
+    if not path:
+        return
+    try:
+        stats = export_user_data_zip(path, app_version=APP_VERSION)
+        self.write_live_log(
+            f"Export uživatelských dat dokončen: {stats['file_count']} souborů -> {stats['path']}"
+        )
+        QMessageBox.information(
+            self,
+            "Export uživatelských dat",
+            (
+                "Záloha byla vytvořena.\n\n"
+                f"Soubor: {stats['path']}\n"
+                f"Zahrnuto souborů: {stats['file_count']}\n"
+                f"Velikost dat: {_user_data_format_size(stats['bytes'])}"
+            ),
+        )
+    except UserDataBackupError as error:
+        self.write_live_log(f"Export uživatelských dat selhal: {error}")
+        QMessageBox.warning(self, "Export uživatelských dat", str(error))
+    except Exception as error:
+        self.write_live_log(f"Export uživatelských dat selhal: {type(error).__name__}: {error}")
+        QMessageBox.warning(self, "Export uživatelských dat", f"Zálohu se nepodařilo vytvořit:\n{error}")
+
+
+def _window_import_user_data_backup(self):
+    path, _filter = QFileDialog.getOpenFileName(
+        self,
+        "Importovat uživatelská data",
+        _user_data_backup_default_dir(),
+        "Záloha Šifrátoru (*.zip);;Všechny soubory (*)",
+    )
+    if not path:
+        return
+
+    try:
+        info = inspect_user_data_backup(path)
+    except UserDataBackupError as error:
+        QMessageBox.warning(self, "Import uživatelských dat", str(error))
+        return
+
+    created = info.get("created_at") or "neznámé datum"
+    version = info.get("app_version") or "neznámá verze"
+    answer = QMessageBox.question(
+        self,
+        "Importovat uživatelská data?",
+        (
+            "Opravdu chcete obnovit uživatelská data z vybraného ZIPu?\n\n"
+            f"Záloha: {path}\n"
+            f"Vytvořeno: {created}\n"
+            f"Verze aplikace v záloze: {version}\n"
+            f"Souborů v záloze: {info['file_count']}\n"
+            f"Velikost dat: {_user_data_format_size(info['bytes'])}\n\n"
+            "Aktuální data se před importem automaticky uloží do bezpečnostní ZIP zálohy. "
+            "Po importu aplikaci restartujte, aby se všechny otevřené části načetly z obnovených souborů."
+        ),
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    if answer != QMessageBox.Yes:
+        return
+
+    try:
+        stats = import_user_data_zip(path, app_version=APP_VERSION)
+        self.write_live_log(
+            f"Import uživatelských dat dokončen: {stats['imported_files']} souborů z {path}"
+        )
+        QMessageBox.information(
+            self,
+            "Import uživatelských dat",
+            (
+                "Import byl dokončen.\n\n"
+                f"Obnoveno souborů: {stats['imported_files']}\n"
+                f"Automatická záloha původních dat:\n{stats['backup_path']}\n\n"
+                "Teď aplikaci zavřete a znovu spusťte, aby se všude načetla obnovená data."
+            ),
+        )
+        try:
+            self.central.update_status()
+        except Exception:
+            pass
+    except UserDataBackupError as error:
+        self.write_live_log(f"Import uživatelských dat selhal: {error}")
+        QMessageBox.warning(self, "Import uživatelských dat", str(error))
+    except Exception as error:
+        self.write_live_log(f"Import uživatelských dat selhal: {type(error).__name__}: {error}")
+        QMessageBox.warning(self, "Import uživatelských dat", f"Import se nepodařil:\n{error}")
+
+
+def _window_show_user_data_backup_window(self):
+    dialog = getattr(self, "_user_data_backup_dialog", None)
+    if dialog is None:
+        dialog = UserDataBackupDialog(self)
+        self._user_data_backup_dialog = dialog
+    else:
+        dialog._refresh_summary()
+    self._show_embedded_dialog_page(dialog, "Záloha dat")
+
+
+SifratorWindow.build_user_data_menu = _window_build_user_data_menu
+SifratorWindow.export_user_data_backup = _window_export_user_data_backup
+SifratorWindow.import_user_data_backup = _window_import_user_data_backup
+SifratorWindow.show_user_data_backup_window = _window_show_user_data_backup_window
+
+try:
+    _USER_DATA_MENU_ORIGINAL_WINDOW_INIT = SifratorWindow.__init__
+
+    def _user_data_menu_window_init(self, *args, **kwargs):
+        result = _USER_DATA_MENU_ORIGINAL_WINDOW_INIT(self, *args, **kwargs)
+        self.build_user_data_menu()
+        return result
+
+    SifratorWindow.__init__ = _user_data_menu_window_init
+except Exception:
+    pass
 
 
 # Důležité uživatelské akce zapisujeme do stejného logu jako aktualizace a cache.

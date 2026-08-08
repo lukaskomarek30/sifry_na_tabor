@@ -155,6 +155,10 @@ jobs:
           print('Syntaxe všech Python souborů je OK.')
           PY
 
+      - name: Kontrola duplicitních modulových definic
+        shell: bash
+        run: python tools/check_duplicate_defs.py
+
   build-test:
     name: Test ${{ matrix.platform }}
     needs: [resolve-version, source-check]

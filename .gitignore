@@ -10,6 +10,7 @@ build/
 dist/
 
 # Vygenerovane vyvojove nahledy a logy
+cache/
 output/
 tmp/
 *.log

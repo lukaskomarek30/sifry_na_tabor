@@ -1,3 +1,5 @@
-81fa2e3c391659184ae21b72467cb1dad66efbc1967e0b1c42751d28c791324e  Sifrator_Mraveniste_windows-x64_v0.0.3.zip
-8f25bc4a8748f6c4dea3f3d6b5ab6f4a5d2e9d114cc0860a04ffc76f419da24a  Sifrator_Mraveniste_macos-arm64_v0.0.3.zip
-e1d5edb1318bff820d6e6e2a901e0d5fcabc82a0ce4e60f636bf9a7e4f7dd85c  Sifrator_Mraveniste_macos-x64_v0.0.3.zip
+# Poslední skutečně vydané balíčky (v0.0.2).
+# Release workflow po sestavení v0.0.4 tento soubor nahradí novými ověřenými součty.
+7e41d5411e3d3b83683e1fea47ecced67a700c5ae8832b615663d6f46bdecfc8  Sifrator_Mraveniste_windows-x64_v0.0.2.zip
+f7e5e89ebd3d306d6f600b0a04d80f74bf1a9e9b42b38752f808424ee0f444f3  Sifrator_Mraveniste_macos-arm64_v0.0.2.zip
+cc246a7f612993b55f293467513b7d0eaa1f533b4eb1143db94de6d2343e2129  Sifrator_Mraveniste_macos-x64_v0.0.2.zip

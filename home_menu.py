@@ -303,6 +303,40 @@ class PirateHomeWidget(QWidget):
         )
         root.addWidget(separator)
 
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.addStretch(1)
+        self.data_backup_button = QPushButton("ZÁLOHA DAT", self)
+        self.data_backup_button.setCursor(Qt.PointingHandCursor)
+        self.data_backup_button.setFixedHeight(36)
+        self.data_backup_button.setMinimumWidth(172)
+        self.data_backup_button.setToolTip("Export a import uživatelských dat")
+        self.data_backup_button.setStyleSheet("""
+            QPushButton {
+                color: #f4dea4;
+                background-color: rgba(4, 23, 31, 130);
+                border: 1px solid rgba(221, 171, 78, 210);
+                border-radius: 8px;
+                padding: 7px 16px;
+                font-family: Georgia;
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                color: #fff0bd;
+                background-color: rgba(19, 77, 86, 190);
+                border: 2px solid #f3d79a;
+            }
+            QPushButton:pressed {
+                background-color: rgba(11, 46, 54, 220);
+            }
+        """)
+        self.data_backup_button.clicked.connect(lambda checked=False: self.navigate_with_animation("backup"))
+        action_row.addWidget(self.data_backup_button, 0, Qt.AlignCenter)
+        action_row.addStretch(1)
+        root.addLayout(action_row)
+
         self.grid_holder = QWidget(self)
         self.grid_holder.setMinimumSize(620, 350)
         self.grid_holder.setMaximumSize(1320, 440)
@@ -326,7 +360,7 @@ class PirateHomeWidget(QWidget):
             ("planner", "Plánovač tábora", "Kalendář programu, šifer a táborových dnů", "compass.png", 0, 2),
             ("batch", "Hromadné šifrování", "Připrav více stanovišť a výtisků najednou", "tiskarna.png", 0, 4),
             ("diploma", "Diplom", "Připrav pirátský diplom pro členy posádky", "pirate_coin.png", 0, 6),
-            ("groups", "Oddíly", "Importuj posádky, vedoucí a osobní karty z Excelu", "tancici_figurky.png", 1, 0),
+            ("groups", "Oddíly/Ubytování", "Importuj posádky, vedoucí, osobní karty a sruby z Excelu", "ubytovani.png", 1, 0),
             ("overview", "Přehled šifer", "Obtížnost, věk, použití a poznámky", "anchor.png", 1, 2),
             ("history", "Historie zpráv", "Vrať se k dříve vytvořeným šifrám", "logo.png", 1, 4),
             ("sports", "Sportovní den", "Naplánuj disciplíny, týmy a průběh dne", "semafor.png", 1, 6),
